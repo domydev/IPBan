@@ -1,7 +1,7 @@
 ﻿/*
 MIT License
 
-Copyright (c) 2019 Digital Ruby, LLC - https://www.digitalruby.com
+Copyright (c) 2012-present Digital Ruby, LLC - https://www.digitalruby.com
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -31,7 +31,7 @@ namespace DigitalRuby.IPBanCore
     /// <summary>
     /// This firewall implementation does nothing, so is great for performance testing
     /// </summary>
-    [RequiredOperatingSystemAttribute(null, -999)] // low priority, basically any other firewall is preferred unless this one is explicitly specified in the config
+    [RequiredOperatingSystemAttribute(null, Priority = -999)] // low priority, basically any other firewall is preferred unless this one is explicitly specified in the config
     [CustomName("Null")]
     public class IPBanNullFirewall : IIPBanFirewall
     {

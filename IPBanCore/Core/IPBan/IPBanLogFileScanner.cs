@@ -1,7 +1,7 @@
 /*
 MIT License
 
-Copyright (c) 2019 Digital Ruby, LLC - https://www.digitalruby.com
+Copyright (c) 2012-present Digital Ruby, LLC - https://www.digitalruby.com
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -45,6 +45,11 @@ namespace DigitalRuby.IPBanCore
         public string Source { get; }
 
         /// <summary>
+        /// Failed login threshold or 0 for default
+        /// </summary>
+        public int FailedLoginThreshold { get; }
+
+        /// <summary>
         /// Create a log file scanner
         /// </summary>
         /// <param name="options">Options</param>
@@ -54,6 +59,7 @@ namespace DigitalRuby.IPBanCore
             options.LoginHandler.ThrowIfNull(nameof(options.LoginHandler));
             options.Dns.ThrowIfNull(nameof(options.Dns));
             Source = options.Source;
+            FailedLoginThreshold = options.FailedLoginThreshold;
 
             this.loginHandler = options.LoginHandler;
             this.dns = options.Dns;
@@ -80,6 +86,10 @@ namespace DigitalRuby.IPBanCore
             foreach (IPAddressLogEvent info in IPBanService.GetIPAddressEventsFromRegex(regex, text, timestampFormat, type, dns))
             {
                 info.Source ??= Source; // apply default source only if we don't already have a source
+                if (info.FailedLoginThreshold <= 0)
+                {
+                    info.FailedLoginThreshold = FailedLoginThreshold;
+                }
                 events.Add(info);
 
                 Logger.Debug("Log file found match, ip: {0}, user: {1}, source: {2}, count: {3}, type: {4}",
@@ -144,5 +154,10 @@ namespace DigitalRuby.IPBanCore
         /// Interval to ping the log file, default is 0 which means manual ping is required
         /// </summary>
         public int PingIntervalMilliseconds { get; set; }
+
+        /// <summary>
+        /// Failed login threshold or 0 for default
+        /// </summary>
+        public int FailedLoginThreshold { get; set; }
     }
 }

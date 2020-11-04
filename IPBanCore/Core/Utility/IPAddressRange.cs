@@ -394,15 +394,25 @@ namespace DigitalRuby.IPBanCore
                 Bits.GtECore(this.End.GetAddressBytes(), range.End.GetAddressBytes(), offset);
         }
 
-        public static IPAddressRange Parse(string ipRangeString)
+        public static IPAddressRange Parse(string ipRangeString, bool throwException = true)
         {
-            if (ipRangeString is null) throw new ArgumentNullException(nameof(ipRangeString));
+            if (ipRangeString is null)
+            {
+                if (throwException)
+                {
+                    throw new ArgumentNullException(nameof(ipRangeString));
+                }
+                else
+                {
+                    return null;
+                }
+            }
 
             // trim white spaces.
             ipRangeString = ipRangeString.Trim();
 
             // define local funtion to strip scope id in ip address string.
-            string stripScopeId(string ipaddressString) => ipaddressString.Split('%')[0];
+            static string stripScopeId(string ipaddressString) => ipaddressString.Split('%')[0];
 
             // Pattern 1. CIDR range: "192.168.0.0/24", "fe80::/10%eth0"
             var m1 = m1_regex.Match(ipRangeString);
@@ -453,17 +463,21 @@ namespace DigitalRuby.IPBanCore
                 return new IPAddressRange(new IPAddress(baseAdrBytes), new IPAddress(Bits.Or(baseAdrBytes, Bits.Not(maskBytes))));
             }
 
-            throw new FormatException("Unknown IP range string.");
+            if (throwException)
+            {
+                throw new FormatException("Unknown IP range string.");
+            }
+            return null;
         }
 
         public static bool TryParse(string ipRangeString, out IPAddressRange ipRange)
         {
             try
             {
-                ipRange = IPAddressRange.Parse(ipRangeString);
-                return true;
+                ipRange = IPAddressRange.Parse(ipRangeString, false);
+                return (ipRange != null);
             }
-            catch (Exception)
+            catch
             {
                 ipRange = null;
                 return false;
@@ -493,6 +507,15 @@ namespace DigitalRuby.IPBanCore
         public static implicit operator IPAddressRange(string s)
         {
             return (string.IsNullOrWhiteSpace(s) ? null : IPAddressRange.Parse(s));
+        }
+
+        /// <summary>
+        /// Convert ip address range to string implicit
+        /// </summary>
+        /// <param name="ip">Ip address</param>
+        public static implicit operator IPAddressRange(IPAddress ip)
+        {
+            return (ip is null ? null : new IPAddressRange(ip));
         }
 
         /// <summary>
@@ -605,9 +628,14 @@ namespace DigitalRuby.IPBanCore
         /// <summary>
         /// Returns a Cidr String if this matches exactly a Cidr subnet
         /// </summary>
-        public string ToCidrString()
+        /// <param name="displaySingleSubnet">Whether to display the cidr string even if this is a single ip address.</param>
+        public string ToCidrString(bool displaySingleSubnet = true)
         {
-            return Begin.ToString() + "/" + GetPrefixLength().ToString(CultureInfo.InvariantCulture);
+            if (displaySingleSubnet || !Begin.Equals(End))
+            {
+                return Begin.ToString() + "/" + GetPrefixLength().ToString(CultureInfo.InvariantCulture);
+            }
+            return Begin.ToString();
         }
 
         #region JSON.NET Support by implement IReadOnlyDictionary<string, string>
@@ -684,12 +712,12 @@ namespace DigitalRuby.IPBanCore
     public struct PortRange
     {
         /// <summary>
-        /// Min port
+        /// Min port, inclusive
         /// </summary>
         public int MinPort { get; private set; }
 
         /// <summary>
-        /// Max port
+        /// Max port, inclusive
         /// </summary>
         public int MaxPort { get; private set; }
 
@@ -746,6 +774,16 @@ namespace DigitalRuby.IPBanCore
         }
 
         /// <summary>
+        /// Check if port range contains a port
+        /// </summary>
+        /// <param name="port">Port</param>
+        /// <returns>True if contains the port, false otherwise</returns>
+        public bool Contains(int port)
+        {
+            return port >= MinPort && port <= MaxPort;
+        }
+
+        /// <summary>
         /// Parse a port range from a string. If parsing fails, min port will be -1.
         /// </summary>
         /// <param name="s">String</param>
@@ -762,15 +800,23 @@ namespace DigitalRuby.IPBanCore
                 return new PortRange(-1, -1);
             }
             string[] pieces = s.Split('-', StringSplitOptions.RemoveEmptyEntries);
-            if (pieces.Length == 0)
+            if (pieces.Length == 1)
             {
-                return new PortRange();
+                if (int.TryParse(pieces[0], NumberStyles.Any, CultureInfo.InvariantCulture, out int singlePort))
+                {
+                    return new PortRange(singlePort);
+                }
+
             }
-            else if (pieces.Length == 1)
+            else if (pieces.Length == 2)
             {
-                return new PortRange(int.Parse(pieces[0], CultureInfo.InvariantCulture));
+                if (int.TryParse(pieces[0], NumberStyles.Any, CultureInfo.InvariantCulture, out int singlePort1) &&
+                    int.TryParse(pieces[1], NumberStyles.Any, CultureInfo.InvariantCulture, out int singlePort2))
+                {
+                    return new PortRange(singlePort1, singlePort2);
+                }
             }
-            return new PortRange(int.Parse(pieces[0], CultureInfo.InvariantCulture), int.Parse(pieces[1], CultureInfo.InvariantCulture));
+            return new PortRange(-1, -1);
         }
 
         /// <summary>

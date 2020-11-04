@@ -1,7 +1,7 @@
 ﻿/*
 MIT License
 
-Copyright (c) 2019 Digital Ruby, LLC - https://www.digitalruby.com
+Copyright (c) 2012-present Digital Ruby, LLC - https://www.digitalruby.com
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -465,70 +465,84 @@ namespace DigitalRuby.IPBanCore
         /// <returns>Returns true if the IP is internal, false if it is external</returns>
         public static bool IsInternal(this System.Net.IPAddress ip)
         {
-            if (ip.IsIPv4MappedToIPv6)
+            try
             {
-                ip = ip.MapToIPv4();
-            }
-            if (ip.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
-            {
-                byte[] bytes = ip.GetAddressBytes();
-                switch (bytes[0])
+                if (ip.IsIPv4MappedToIPv6)
                 {
-                    case 10:
-                    case 127:
-                        return true;
-                    case 172:
-                        return bytes[1] >= 16 && bytes[1] < 32;
-                    case 192:
-                        return bytes[1] == 168;
-                    case 0:
-                        return true;
-                    default:
-                        return false;
+                    ip = ip.MapToIPv4();
                 }
+                if (ip.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
+                {
+                    byte[] bytes = ip.GetAddressBytes();
+                    if (bytes is null || bytes.Length < 4)
+                    {
+                        return true;
+                    }
+                    switch (bytes[0])
+                    {
+                        case 10:
+                        case 127:
+                            return true;
+                        case 172:
+                            return bytes[1] >= 16 && bytes[1] < 32;
+                        case 192:
+                            return bytes[1] == 168;
+                        case 0:
+                            return true;
+                        default:
+                            return false;
+                    }
+                }
+
+                string addressAsString = ip.ToString();
+
+                // equivalent of 127.0.0.1 in IPv6
+                if (string.IsNullOrWhiteSpace(addressAsString) ||
+                    addressAsString.Length < 3 ||
+                    addressAsString == "::1")
+                {
+                    return true;
+                }
+
+                // The original IPv6 Site Local addresses (fec0::/10) are deprecated. Unfortunately IsIPv6SiteLocal only checks for the original deprecated version:
+                else if (ip.IsIPv6SiteLocal)
+                {
+                    return true;
+                }
+
+                string firstWord = addressAsString.Split(new[] { ':' }, StringSplitOptions.RemoveEmptyEntries)[0];
+
+                // These days Unique Local Addresses (ULA) are used in place of Site Local. 
+                // ULA has two variants: 
+                //      fc00::/8 is not defined yet, but might be used in the future for internal-use addresses that are registered in a central place (ULA Central). 
+                //      fd00::/8 is in use and does not have to registered anywhere.
+                if (firstWord.Length >= 4 && firstWord.Substring(0, 2) == "fc")
+                {
+                    return true;
+                }
+                else if (firstWord.Length >= 4 && firstWord.Substring(0, 2) == "fd")
+                {
+                    return true;
+                }
+                // Link local addresses (prefixed with fe80) are not routable
+                else if (firstWord == "fe80")
+                {
+                    return true;
+                }
+                // Discard Prefix
+                else if (firstWord == "100")
+                {
+                    return true;
+                }
+
+                // Any other IP address is not Unique Local Address (ULA)
+                return false;
             }
-
-            string addressAsString = ip.ToString();
-
-            // equivalent of 127.0.0.1 in IPv6
-            if (addressAsString == "::1")
+            catch (Exception ex)
             {
+                Logger.Warn("Invalid ip isinternal check: {0}, {1}", ip, ex);
                 return true;
             }
-
-            // The original IPv6 Site Local addresses (fec0::/10) are deprecated. Unfortunately IsIPv6SiteLocal only checks for the original deprecated version:
-            else if (ip.IsIPv6SiteLocal)
-            {
-                return true;
-            }
-
-            string firstWord = addressAsString.Split(new[] { ':' }, StringSplitOptions.RemoveEmptyEntries)[0];
-
-            // These days Unique Local Addresses (ULA) are used in place of Site Local. 
-            // ULA has two variants: 
-            //      fc00::/8 is not defined yet, but might be used in the future for internal-use addresses that are registered in a central place (ULA Central). 
-            //      fd00::/8 is in use and does not have to registered anywhere.
-            if (firstWord.Length >= 4 && firstWord.Substring(0, 2) == "fc")
-            {
-                return true;
-            }
-            else if (firstWord.Length >= 4 && firstWord.Substring(0, 2) == "fd")
-            {
-                return true;
-            }
-            // Link local addresses (prefixed with fe80) are not routable
-            else if (firstWord == "fe80")
-            {
-                return true;
-            }
-            // Discard Prefix
-            else if (firstWord == "100")
-            {
-                return true;
-            }
-
-            // Any other IP address is not Unique Local Address (ULA)
-            return false;
         }
 
         /// <summary>
@@ -567,7 +581,7 @@ namespace DigitalRuby.IPBanCore
                 byte[] bytes = ip.GetAddressBytes();
                 if (bytes.Length == 4)
                 {
-                    return (bytes[0] == 127 && bytes[1] == 0 && bytes[2] == 0 && bytes[3] == 1);
+                    return (bytes[0] == 127 && bytes[1] == 0 && (bytes[2] == 0 || bytes[2] == 1) && bytes[3] == 1);
                 }
                 else if (bytes.Length == 16)
                 {
@@ -603,22 +617,50 @@ namespace DigitalRuby.IPBanCore
         }
 
         /// <summary>
-        /// Get a UInt128 from an ipv6 address. The UInt128 will be in the byte order of the CPU.
+        /// Get a UInt128 from an ipv6 address. The UInt128 will be in the byte order of the CPU by default.
         /// </summary>
         /// <param name="ip">IPV6 address</param>
+        /// <param name="swap">Whether to swap bytes for CPU order</param>
         /// <returns>UInt128</returns>
         /// <exception cref="InvalidOperationException">Not an ipv6 address</exception>
-        public static UInt128 ToUInt128(this IPAddress ip)
+        public static unsafe UInt128 ToUInt128(this IPAddress ip, bool swap = true)
         {
             if (ip is null || ip.AddressFamily != System.Net.Sockets.AddressFamily.InterNetworkV6)
             {
                 throw new InvalidOperationException(ip?.ToString() + " is not an ipv6 address");
             }
 
-            byte[] bytes = ip.GetAddressBytes().Reverse().ToArray();
-            ulong l1 = BitConverter.ToUInt64(bytes, 0);
-            ulong l2 = BitConverter.ToUInt64(bytes, 8);
-            return new UInt128(l2, l1);
+            byte[] bytes = ip.GetAddressBytes();
+            if (swap)
+            {
+                bytes = bytes.Reverse().ToArray();
+                ulong l1 = BitConverter.ToUInt64(bytes, 0);
+                ulong l2 = BitConverter.ToUInt64(bytes, 8);
+                return new UInt128(l2, l1);
+            }
+            else
+            {
+                bytes = bytes.ToArray();
+                ulong l1 = BitConverter.ToUInt64(bytes, 0);
+                ulong l2 = BitConverter.ToUInt64(bytes, 8);
+                return new UInt128(l1, l2);
+            }
+        }
+
+        /// <summary>
+        /// Get a UInt128 from an ipv6 address. The UInt128 will use the raw bytes from the ip address as is.
+        /// </summary>
+        /// <param name="ip">IPV6 address</param>
+        /// <returns>UInt128</returns>
+        /// <exception cref="InvalidOperationException">Not an ipv6 address</exception>
+        public static unsafe UInt128 ToUInt128Raw(this IPAddress ip)
+        {
+            byte[] bytes = ip.GetAddressBytes();
+            fixed (byte* ptr = bytes)
+            {
+                ulong* ulongPtr = (ulong*)ptr;
+                return new UInt128(*ulongPtr, *(++ulongPtr));
+            }
         }
 
         /// <summary>
@@ -675,6 +717,38 @@ namespace DigitalRuby.IPBanCore
         }
 
         /// <summary>
+        /// Get an ip address from a UInt128. The UInt128 raw bytes are used as is.
+        /// </summary>
+        /// <param name="value">UInt128</param>
+        /// <returns>IPAddress</returns>
+        public static unsafe IPAddress ToIPAddressRaw(this UInt128 value)
+        {
+            byte* bytes = (byte*)&value;
+            byte[] managedBytes = new byte[16];
+            for (int i = 0; i < managedBytes.Length; i++)
+            {
+                managedBytes[i] = bytes[i];
+            }
+            return new IPAddress(managedBytes);
+        }
+
+        /// <summary>
+        /// Convert UnmanagedMemoryStream to a byte array
+        /// </summary>
+        /// <param name="stream">UnmanagedMemoryStream</param>
+        /// <returns>Byte array</returns>
+        public static byte[] ToArray(this UnmanagedMemoryStream stream)
+        {
+            byte[] bytes = new byte[stream.Length];
+            stream.Position = 0;
+            for (int i = 0; i < bytes.Length; i++)
+            {
+                bytes[i] = (byte)stream.ReadByte();
+            }
+            return bytes;
+        }
+
+        /// <summary>
         /// Clamp a timespan, if out of bounds it will be clamped. If timespan is less than 1 second, it will be set to timeMax.
         /// </summary>
         /// <param name="value">Value to clamp</param>
@@ -720,52 +794,96 @@ namespace DigitalRuby.IPBanCore
             return val;
         }
 
+        private static Assembly[] allAssemblies;
+        /// <summary>
+        /// Get all assemblies
+        /// </summary>
+        /// <returns>Assemblies</returns>
+        public static IReadOnlyCollection<Assembly> GetAllAssemblies()
+        {
+            if (allAssemblies != null)
+            {
+                return allAssemblies;
+            }
+            List<Assembly> assemblies = new List<Assembly>();
+            assemblies.AddRange(AppDomain.CurrentDomain.GetAssemblies());
+
+            // attempt to load plugins
+            string pluginPath = Path.Combine(AppContext.BaseDirectory, "plugins");
+            try
+            {
+                if (Directory.Exists(pluginPath))
+                {
+                    foreach (string pluginFile in Directory.GetFiles(pluginPath, "*.dll"))
+                    {
+                        try
+                        {
+                            assemblies.Add(Assembly.LoadFile(pluginFile));
+                        }
+                        catch (Exception ex)
+                        {
+                            Logger.Error(ex, "Failed to load plugin at {0}", pluginFile);
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Error(ex, "Failed to load plugins from {0}", pluginPath);
+            }
+
+            // load assembly references
+            foreach (Assembly assembly in assemblies.ToArray())
+            {
+                foreach (AssemblyName referencedAssemblyName in assembly.GetReferencedAssemblies())
+                {
+
+                    try
+                    {
+                        if (!assemblies.Any(x => x.GetName().FullName.Equals(referencedAssemblyName.FullName, StringComparison.OrdinalIgnoreCase)))
+                        {
+                            Assembly referencedAssembly = Assembly.Load(referencedAssemblyName);
+                            assemblies.Add(referencedAssembly);
+                        }
+                    }
+                    catch
+                    {
+                        // ignore
+                    }
+                }
+            }
+
+            allAssemblies = assemblies.ToArray();
+            return allAssemblies;
+        }
+
+        private static Type[] allTypes;
         /// <summary>
         /// Get all types from all assemblies
         /// </summary>
         /// <returns>List of all types</returns>
-        public static List<Type> GetAllTypes()
+        public static IReadOnlyCollection<Type> GetAllTypes()
         {
-            Assembly[] assemblies = AppDomain.CurrentDomain.GetAssemblies();
-            List<Type> allTypes = new List<Type>();
+            if (allTypes != null)
+            {
+                return allTypes;
+            }
+            IReadOnlyCollection<Assembly> assemblies = GetAllAssemblies();
+            List<Type> types = new List<Type>();
             foreach (Assembly assembly in assemblies)
             {
                 try
                 {
                     // some assemblys throw in unit tests in VS 2019, bug in MSFT...
-                    allTypes.AddRange(assembly.GetTypes());
+                    types.AddRange(assembly.GetTypes());
                 }
                 catch
                 {
+                    // ignore
                 }
             }
+            allTypes = types.ToArray();
             return allTypes;
-        }
-
-        /// <summary>
-        /// Get all assemblies with at least one class matching a type
-        /// </summary>
-        /// <param name="type">Type to match</param>
-        /// <returns>Assemblies with that type</returns>
-        public static IEnumerable<Assembly> GetAssembliesWithType(Type type)
-        {
-            foreach (Assembly assembly in AppDomain.CurrentDomain.GetAssemblies())
-            {
-                Type[] types;
-                try
-                {
-                    types = assembly.GetTypes();
-                }
-                catch
-                {
-                    // some assemblys throw in unit tests in VS 2019, bug in MSFT...
-                    continue;
-                }
-                if (types.Any(t => t.IsSubclassOf(type)))
-                {
-                    yield return assembly;
-                }
-            }
         }
 
         /// <summary>
@@ -781,17 +899,32 @@ namespace DigitalRuby.IPBanCore
             {
                 // append ipv4 first, then the ipv6 then the remote ip
                 List<IPAddress> ips = new List<IPAddress>();
-                ips.AddRange(await dns.GetHostAddressesAsync(dns.GetHostName()));
+                string hostName = await dns.GetHostNameAsync();
+                IPAddress[] hostAddresses = await dns.GetHostAddressesAsync(hostName);
+                ips.AddRange(hostAddresses.Where(i => !i.IsLocalHost()));
+
+                // sort ipv4 first
+                ips.Sort((ip1, ip2) =>
+                {
+                    int compare = ip1.AddressFamily.CompareTo(ip2.AddressFamily);
+                    if (compare == 0)
+                    {
+                        compare = ip1.CompareTo(ip2);
+                    }
+                    return compare;
+                });
+
                 if (allowLocal)
                 {
                     ips.AddRange(localHostIP);
                 }
-                return ips.Where(ip => (allowLocal || ip.IsLocalHost()) ||
+
+                return ips.Where(ip => (allowLocal || !ip.IsLocalHost()) &&
                     (addressFamily is null || ip.AddressFamily == addressFamily)).ToArray();
             }
             catch
             {
-
+                // eat exception, delicious
             }
             return new System.Net.IPAddress[0];
         }
@@ -957,10 +1090,12 @@ namespace DigitalRuby.IPBanCore
         /// <param name="action">Action</param>
         /// <param name="millisecondsBetweenRetry">Milliseconds between each retry</param>
         /// <param name="retryCount">Retry count</param>
-        public static void Retry(Action action, int millisecondsBetweenRetry = 1000, int retryCount = 3)
+        /// <param name="exceptionRetry">Optional func to determine if exception should be retried</param>
+        public static void Retry(Action action, int millisecondsBetweenRetry = 1000, int retryCount = 3,
+            Func<Exception, bool> exceptionRetry = null)
         {
             Exception lastError = null;
-            for (int i = 0; i < retryCount; i++)
+            for (int i = 1; i <= retryCount; i++)
             {
                 try
                 {
@@ -970,11 +1105,15 @@ namespace DigitalRuby.IPBanCore
                 catch (Exception ex)
                 {
                     lastError = ex;
-                    if (lastError is OperationCanceledException)
+                    if (lastError is OperationCanceledException ||
+                        (exceptionRetry != null && !exceptionRetry(ex)))
                     {
                         break;
                     }
-                    Thread.Sleep(millisecondsBetweenRetry);
+                    else if (i != retryCount)
+                    {
+                        Thread.Sleep(millisecondsBetweenRetry);
+                    }
                 }
             }
             throw lastError;
@@ -986,11 +1125,13 @@ namespace DigitalRuby.IPBanCore
         /// <param name="action">Action</param>
         /// <param name="millisecondsBetweenRetry">Milliseconds between each retry</param>
         /// <param name="retryCount">Retry count</param>
+        /// <param name="exceptionRetry">Optional func to determine if exception should be retried</param>
         /// <returns>Task</returns>
-        public static async Task RetryAsync(Func<Task> action, int millisecondsBetweenRetry = 1000, int retryCount = 3)
+        public static async Task RetryAsync(Func<Task> action, int millisecondsBetweenRetry = 1000, int retryCount = 3,
+            Func<Exception, bool> exceptionRetry = null)
         {
             Exception lastError = null;
-            for (int i = 0; i < retryCount; i++)
+            for (int i = 1; i <= retryCount; i++)
             {
                 try
                 {
@@ -1000,11 +1141,15 @@ namespace DigitalRuby.IPBanCore
                 catch (Exception ex)
                 {
                     lastError = ex;
-                    if (lastError is OperationCanceledException)
+                    if (lastError is OperationCanceledException ||
+                        (exceptionRetry != null && !exceptionRetry(ex)))
                     {
                         break;
                     }
-                    Thread.Sleep(millisecondsBetweenRetry);
+                    else if (i != retryCount)
+                    {
+                        Thread.Sleep(millisecondsBetweenRetry);
+                    }
                 }
             }
             throw lastError;
@@ -1023,37 +1168,13 @@ namespace DigitalRuby.IPBanCore
                 return type;
             }
 
-            Assembly[] assemblies = AppDomain.CurrentDomain.GetAssemblies();
+            IReadOnlyCollection<Assembly> assemblies = GetAllAssemblies();
             foreach (Assembly assembly in assemblies)
             {
                 type = assembly.GetType(typeString);
                 if (type != null)
                 {
                     return type;
-                }
-            }
-            List<Assembly> loadedAssemblies = assemblies.ToList();
-            foreach (Assembly assembly in assemblies)
-            {
-                foreach (AssemblyName referencedAssemblyName in assembly.GetReferencedAssemblies())
-                {
-                    if (!loadedAssemblies.All(x => x.GetName() != referencedAssemblyName))
-                    {
-                        try
-                        {
-                            Assembly referencedAssembly = Assembly.Load(referencedAssemblyName);
-                            type = referencedAssembly.GetType(typeString);
-                            if (type != null)
-                            {
-                                return type;
-                            }
-                            loadedAssemblies.Add(referencedAssembly);
-                        }
-                        catch
-                        {
-                            // We will ignore this, because the Type might still be in one of the other Assemblies.
-                        }
-                    }
                 }
             }
             return null;

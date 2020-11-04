@@ -1,7 +1,7 @@
 ﻿/*
 MIT License
 
-Copyright (c) 2019 Digital Ruby, LLC - https://www.digitalruby.com
+Copyright (c) 2012-present Digital Ruby, LLC - https://www.digitalruby.com
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -22,6 +22,8 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
+// #define ENABLE_FIREWALL_PROFILING
+
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -33,7 +35,7 @@ using System.Threading.Tasks;
 
 namespace DigitalRuby.IPBanCore
 {
-    public abstract class IPBanLinuxBaseFirewall : IPBanBaseFirewall, IIPBanFirewall
+    public abstract class IPBanLinuxBaseFirewall : IPBanBaseFirewall
     {
         private readonly AddressFamily addressFamily;
         private DateTime lastUpdate = IPBanService.UtcNow;
@@ -196,31 +198,35 @@ namespace DigitalRuby.IPBanCore
             RunProcess(IpTablesProcess, true, out IReadOnlyList<string> lines, "-L --line-numbers");
             string portString = " ";
             bool replaced = false;
+            bool block = (action == "DROP");
+
             if (allowedPortsArray != null && allowedPortsArray.Length != 0)
             {
-                string portList = (action == "DROP" ? IPBanFirewallUtility.GetPortRangeStringBlockExcept(allowedPorts) :
+                string portList = (block ? IPBanFirewallUtility.GetBlockPortRangeString(allowedPorts) :
                      IPBanFirewallUtility.GetPortRangeStringAllow(allowedPorts));
                 portString = " -m multiport -p tcp --dports " + portList.Replace('-', ':') + " "; // iptables uses ':' instead of '-' for range
             }
+
             string ruleNameWithSpaces = " " + ruleName + " ";
             foreach (string line in lines)
             {
-                if (line.IndexOf(ruleNameWithSpaces, StringComparison.OrdinalIgnoreCase) >= 0)
+                if (line.Contains(ruleNameWithSpaces, StringComparison.OrdinalIgnoreCase))
                 {
                     // rule number is first piece of the line
                     int index = line.IndexOf(' ');
                     int ruleNum = int.Parse(line.Substring(0, index));
 
                     // replace the rule with the new info
-                    RunProcess(IpTablesProcess, true, $"-R INPUT {ruleNum} -m set{portString}--match-set \"{ruleName}\" src -j {action}");
+                    RunProcess(IpTablesProcess, true, $"-R INPUT {ruleNum} -m state --state NEW -m set{portString}--match-set \"{ruleName}\" src -j {action}");
                     replaced = true;
                     break;
                 }
             }
             if (!replaced)
             {
-                // add a new rule
-                RunProcess(IpTablesProcess, true, $"-A INPUT -m set{portString}--match-set \"{ruleName}\" src -j {action}");
+                // add a new rule, for block add to end of list (lower priority) for allow add to begin of list (higher priority)
+                string addCommand = (block ? "-A" : "-I");
+                RunProcess(IpTablesProcess, true, $"{addCommand} INPUT -m state --state NEW -m set{portString}--match-set \"{ruleName}\" src -j {action}");
             }
 
             if (cancelToken.IsCancellationRequested)
@@ -237,7 +243,14 @@ namespace DigitalRuby.IPBanCore
         protected bool UpdateRule(string ruleName, string action, IEnumerable<string> ipAddresses, string hashType, int maxCount,
             IEnumerable<PortRange> allowPorts, CancellationToken cancelToken)
         {
-            string ipFileTemp = OSUtility.Instance.GetTempFileName();
+
+#if ENABLE_FIREWALL_PROFILING
+
+            Stopwatch timer = Stopwatch.StartNew();
+
+#endif
+
+            string ipFileTemp = OSUtility.GetTempFileName();
             try
             {
                 // add and remove the appropriate ip addresses from the set
@@ -297,6 +310,15 @@ namespace DigitalRuby.IPBanCore
             finally
             {
                 ExtensionMethods.FileDeleteWithRetry(ipFileTemp);
+
+#if ENABLE_FIREWALL_PROFILING
+
+                timer.Stop();
+                Logger.Warn("BlockIPAddressesDelta rule '{0}' took {1:0.00}ms with {2} ips",
+                    ruleName, timer.Elapsed.TotalMilliseconds, ipAddresses.Count());
+
+#endif
+
             }
         }
 
@@ -304,7 +326,14 @@ namespace DigitalRuby.IPBanCore
         protected bool UpdateRuleDelta(string ruleName, string action, IEnumerable<IPBanFirewallIPAddressDelta> deltas, string hashType,
             int maxCount, bool deleteRule, IEnumerable<PortRange> allowPorts, CancellationToken cancelToken)
         {
-            string ipFileTemp = OSUtility.Instance.GetTempFileName();
+
+#if ENABLE_FIREWALL_PROFILING
+
+            Stopwatch timer = Stopwatch.StartNew();
+
+#endif
+
+            string ipFileTemp = OSUtility.GetTempFileName();
             try
             {
                 // add and remove the appropriate ip addresses from the set
@@ -373,6 +402,15 @@ namespace DigitalRuby.IPBanCore
             finally
             {
                 ExtensionMethods.FileDeleteWithRetry(ipFileTemp);
+
+#if ENABLE_FIREWALL_PROFILING
+
+                timer.Stop();
+                Logger.Warn("BlockIPAddressesDelta rule '{0}' took {1:0.00}ms with {2} ips",
+                    ruleName, timer.Elapsed.TotalMilliseconds, deltas.Count());
+
+#endif
+
             }
         }
 
@@ -419,7 +457,7 @@ namespace DigitalRuby.IPBanCore
             return Task.CompletedTask;
         }
 
-        public IEnumerable<string> GetRuleNames(string ruleNamePrefix = null)
+        public override IEnumerable<string> GetRuleNames(string ruleNamePrefix = null)
         {
             const string setText = " match-set ";
             string prefix = setText + RulePrefix + (ruleNamePrefix ?? string.Empty);
@@ -437,7 +475,7 @@ namespace DigitalRuby.IPBanCore
             }
         }
 
-        public bool DeleteRule(string ruleName)
+        public override bool DeleteRule(string ruleName)
         {
             RunProcess(IpTablesProcess, true, out IReadOnlyList<string> lines, "-L --line-numbers");
             string ruleNameWithSpaces = " " + ruleName + " ";
@@ -462,7 +500,7 @@ namespace DigitalRuby.IPBanCore
             return false;
         }
 
-        public virtual Task<bool> BlockIPAddresses(string ruleNamePrefix, IEnumerable<string> ipAddresses, IEnumerable<PortRange> allowedPorts = null, CancellationToken cancelToken = default)
+        public override Task<bool> BlockIPAddresses(string ruleNamePrefix, IEnumerable<string> ipAddresses, IEnumerable<PortRange> allowedPorts = null, CancellationToken cancelToken = default)
         {
             try
             {
@@ -471,12 +509,15 @@ namespace DigitalRuby.IPBanCore
             }
             catch (Exception ex)
             {
-                Logger.Error(ex);
+                if (!(ex is OperationCanceledException))
+                {
+                    Logger.Error(ex);
+                }
                 return Task.FromResult(false);
             }
         }
 
-        public virtual Task<bool> BlockIPAddressesDelta(string ruleNamePrefix, IEnumerable<IPBanFirewallIPAddressDelta> deltas, IEnumerable<PortRange> allowedPorts = null, CancellationToken cancelToken = default)
+        public override Task<bool> BlockIPAddressesDelta(string ruleNamePrefix, IEnumerable<IPBanFirewallIPAddressDelta> deltas, IEnumerable<PortRange> allowedPorts = null, CancellationToken cancelToken = default)
         {
             try
             {
@@ -485,12 +526,15 @@ namespace DigitalRuby.IPBanCore
             }
             catch (Exception ex)
             {
-                Logger.Error(ex);
+                if (!(ex is OperationCanceledException))
+                {
+                    Logger.Error(ex);
+                }
                 return Task.FromResult(false);
             }
         }
 
-        public virtual Task<bool> BlockIPAddresses(string ruleNamePrefix, IEnumerable<IPAddressRange> ranges, IEnumerable<PortRange> allowedPorts = null, CancellationToken cancelToken = default)
+        public override Task<bool> BlockIPAddresses(string ruleNamePrefix, IEnumerable<IPAddressRange> ranges, IEnumerable<PortRange> allowedPorts = null, CancellationToken cancelToken = default)
         {
             ruleNamePrefix.ThrowIfNullOrEmpty();
 
@@ -500,12 +544,15 @@ namespace DigitalRuby.IPBanCore
             }
             catch (Exception ex)
             {
-                Logger.Error(ex);
+                if (!(ex is OperationCanceledException))
+                {
+                    Logger.Error(ex);
+                }
                 return Task.FromResult(false);
             }
         }
 
-        public virtual Task<bool> AllowIPAddresses(IEnumerable<string> ipAddresses, CancellationToken cancelToken = default)
+        public override Task<bool> AllowIPAddresses(IEnumerable<string> ipAddresses, CancellationToken cancelToken = default)
         {
             try
             {
@@ -513,12 +560,15 @@ namespace DigitalRuby.IPBanCore
             }
             catch (Exception ex)
             {
-                Logger.Error(ex);
+                if (!(ex is OperationCanceledException))
+                {
+                    Logger.Error(ex);
+                }
                 return Task.FromResult(false);
             }
         }
 
-        public virtual Task<bool> AllowIPAddresses(string ruleNamePrefix, IEnumerable<IPAddressRange> ipAddresses, IEnumerable<PortRange> allowedPorts = null, CancellationToken cancelToken = default)
+        public override Task<bool> AllowIPAddresses(string ruleNamePrefix, IEnumerable<IPAddressRange> ipAddresses, IEnumerable<PortRange> allowedPorts = null, CancellationToken cancelToken = default)
         {
             try
             {
@@ -527,14 +577,17 @@ namespace DigitalRuby.IPBanCore
             }
             catch (Exception ex)
             {
-                Logger.Error(ex);
+                if (!(ex is OperationCanceledException))
+                {
+                    Logger.Error(ex);
+                }
                 return Task.FromResult(false);
             }
         }
 
-        public IEnumerable<IPAddressRange> EnumerateIPAddresses(string ruleNamePrefix = null)
+        public override IEnumerable<IPAddressRange> EnumerateIPAddresses(string ruleNamePrefix = null)
         {
-            string tempFile = OSUtility.Instance.GetTempFileName();
+            string tempFile = OSUtility.GetTempFileName();
             try
             {
                 string prefix = RulePrefix + (ruleNamePrefix ?? string.Empty);
@@ -559,20 +612,20 @@ namespace DigitalRuby.IPBanCore
             }
         }
 
-        public bool IsIPAddressBlocked(string ipAddress, out string ruleName, int port = -1)
+        public override bool IsIPAddressBlocked(string ipAddress, out string ruleName, int port = -1)
         {
             ruleName = null;
             return EnumerateBannedIPAddresses().ToArray().Contains(ipAddress);
         }
 
-        public bool IsIPAddressAllowed(string ipAddress, int port = -1)
+        public override bool IsIPAddressAllowed(string ipAddress, int port = -1)
         {
             return EnumerateAllowedIPAddresses().ToArray().Contains(ipAddress);
         }
 
-        public IEnumerable<string> EnumerateBannedIPAddresses()
+        public override IEnumerable<string> EnumerateBannedIPAddresses()
         {
-            string tempFile = OSUtility.Instance.GetTempFileName();
+            string tempFile = OSUtility.GetTempFileName();
             try
             {
                 RunProcess("ipset", true, $"save > \"{tempFile}\"");
@@ -597,9 +650,9 @@ namespace DigitalRuby.IPBanCore
             }
         }
 
-        public IEnumerable<string> EnumerateAllowedIPAddresses()
+        public override IEnumerable<string> EnumerateAllowedIPAddresses()
         {
-            string tempFile = OSUtility.Instance.GetTempFileName();
+            string tempFile = OSUtility.GetTempFileName();
             try
             {
                 RunProcess("ipset", true, $"save > \"{tempFile}\"");
@@ -623,7 +676,7 @@ namespace DigitalRuby.IPBanCore
             }
         }
 
-        public virtual void Truncate()
+        public override void Truncate()
         {
             RemoveAllTablesAndSets();
         }

@@ -23,6 +23,7 @@ SOFTWARE.
 */
 
 using System;
+using System.Threading;
 using System.Threading.Tasks;
 
 using DigitalRuby.IPBanCore;
@@ -44,16 +45,19 @@ namespace DigitalRuby.IPBan
             if (args.Length != 0 && (args[0].Equals("info", StringComparison.OrdinalIgnoreCase) ||
                 args[0].Equals("-info", StringComparison.OrdinalIgnoreCase)))
             {
-                Logger.Warn("System info: {0}", OSUtility.Instance.OSString());
+                Logger.Warn("System info: {0}", OSUtility.OSString());
                 return;
             }
 
             IPBanService service = null;
-            await IPBanServiceRunner.MainService(args, () =>
+            await IPBanServiceRunner.MainService(args, (CancellationToken cancelToken) =>
             {
                 service = IPBanService.CreateService<IPBanService>();
-                return service.StartAsync();
-            }, () =>
+                Logger.Warn("IPBan is free software created and refined over many years.");
+                Logger.Warn("Please consider upgrading to the pro version for more advanced functions, shared ban lists and much more.");
+                Logger.Warn("Learn more at https://ipban.com");
+                return service.RunAsync(cancelToken);
+            }, (CancellationToken cancelToken) =>
             {
                 service?.Dispose();
                 return Task.CompletedTask;

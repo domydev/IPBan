@@ -24,40 +24,37 @@ SOFTWARE.
 
 using System;
 using System.Collections.Generic;
+using System.Net;
+using System.Net.NetworkInformation;
 using System.Text;
 
 namespace DigitalRuby.IPBanCore
 {
     /// <summary>
-    /// Detect if we are running as part of a nUnit unit test, in order to work-around .NET core 3 bugs in unit tests (like razor).
-    /// </summary>    
-    public static class UnitTestDetector
+    /// Network utility methods
+    /// </summary>
+    public static class NetworkUtility
     {
         /// <summary>
-        /// True if running unit tests, false otherwise
+        /// Get the local configured dns servers for this machine from all network interfaces
         /// </summary>
-        public static bool Running { get; }
-
-        /// <summary>
-        /// Static constructor
-        /// </summary>
-        static UnitTestDetector()
+        /// <returns>All dns servers for this local machine</returns>
+        public static IReadOnlyCollection<IPAddress> GetLocalDnsServers()
         {
-            try
+            List<IPAddress> dnsServers = new List<IPAddress>();
+            NetworkInterface[] networkInterfaces = NetworkInterface.GetAllNetworkInterfaces();
+
+            foreach (NetworkInterface networkInterface in networkInterfaces)
             {
-                foreach (System.Reflection.Assembly assem in AppDomain.CurrentDomain.GetAssemblies())
+                if (networkInterface.OperationalStatus == OperationalStatus.Up)
                 {
-                    if (assem.FullName.ToLowerInvariant().StartsWith("nunit.framework"))
-                    {
-                        Running = true;
-                        break;
-                    }
+                    IPInterfaceProperties ipProperties = networkInterface.GetIPProperties();
+                    IPAddressCollection dnsAddresses = ipProperties.DnsAddresses;
+                    dnsServers.AddRange(dnsAddresses);
                 }
             }
-            catch (Exception ex)
-            {
-                Logger.Error($"Error in {nameof(UnitTestDetector)} static constructor", ex);
-            }
+
+            return dnsServers;
         }
     }
 }

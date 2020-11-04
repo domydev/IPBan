@@ -1,7 +1,7 @@
 ﻿/*
 MIT License
 
-Copyright (c) 2019 Digital Ruby, LLC - https://www.digitalruby.com
+Copyright (c) 2012-present Digital Ruby, LLC - https://www.digitalruby.com
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -165,8 +165,10 @@ namespace DigitalRuby.IPBanCore
         /// <param name="arguments">Arguments</param>
         public static void CreateDetachedProcess(string fileName, string arguments)
         {
-            if (OSUtility.Instance.IsWindows)
+            if (OSUtility.IsWindows)
             {
+                Logger.Warn("Running detached process {0} {1}", fileName, arguments);
+
                 var processInformation = new ProcessUtility.PROCESS_INFORMATION();
                 var startupInfo = new ProcessUtility.STARTUPINFO();
                 var sa = new ProcessUtility.SECURITY_ATTRIBUTES();
@@ -177,16 +179,23 @@ namespace DigitalRuby.IPBanCore
             }
             else
             {
+                // ensure process is executable
+                OSUtility.StartProcessAndWait("sudo", "chmod +x \"" + fileName + "\"");
+
+                // use Linux at, should have been installed earlier
                 ProcessStartInfo info = new ProcessStartInfo
                 {
-                    // Linux uses " &" to detach the process
-                    Arguments = arguments + " &",
+                    // Linux uses nohup and " &" to detach the process
+                    // sudo -b to force it into the background
+                    Arguments = "-c \"echo sudo \\\"" + fileName + "\\\" " + arguments.Replace("\"", "\\\"") + " | at now\"",
                     CreateNoWindow = true,
-                    FileName = fileName,
+                    FileName = "/bin/bash",
                     UseShellExecute = false,
                     WindowStyle = ProcessWindowStyle.Hidden,
                     WorkingDirectory = Path.GetDirectoryName(fileName)
                 };
+
+                Logger.Warn("Running detached process {0} {1}", info.FileName, info.Arguments);
 
                 Process.Start(info);
             }

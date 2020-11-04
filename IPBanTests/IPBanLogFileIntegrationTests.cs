@@ -1,7 +1,7 @@
 ﻿/*
 MIT License
 
-Copyright (c) 2019 Digital Ruby, LLC - https://www.digitalruby.com
+Copyright (c) 2012-present Digital Ruby, LLC - https://www.digitalruby.com
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -75,7 +75,7 @@ namespace DigitalRuby.IPBanTests
         public async Task TestLogFilesExchange()
         {
             // only run this test on Windows
-            if (!OSUtility.Instance.IsWindows)
+            if (!OSUtility.IsWindows)
             {
                 return;
             }
@@ -127,7 +127,7 @@ namespace DigitalRuby.IPBanTests
             }
 
             // force service to read all files as empty, the service always starts at the end of the file
-            await service.RunCycle();
+            await service.RunCycleAsync();
 
             // now write the full file contents, service will pick-up all the new text and parse it
             foreach (var file in files)
@@ -137,7 +137,7 @@ namespace DigitalRuby.IPBanTests
             files = null;
 
             // run cycle again to kick off the parse of all the new text
-            await service.RunCycle();
+            await service.RunCycleAsync();
         }
     }
 }

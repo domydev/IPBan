@@ -1,7 +1,7 @@
 ﻿/*
 MIT License
 
-Copyright (c) 2019 Digital Ruby, LLC - https://www.digitalruby.com
+Copyright (c) 2012-present Digital Ruby, LLC - https://www.digitalruby.com
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -22,6 +22,9 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
+using System;
+using System.Collections.Generic;
+using System.Security.Policy;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -30,7 +33,7 @@ namespace DigitalRuby.IPBanCore
     /// <summary>
     /// Base firewall class that all firewall implementations should inherit from
     /// </summary>
-    public class IPBanBaseFirewall : IUpdater
+    public abstract class IPBanBaseFirewall : IIPBanFirewall
     {
         protected bool Disposed { get; private set; }
 
@@ -63,7 +66,6 @@ namespace DigitalRuby.IPBanCore
         /// <param name="rulePrefix">Rule prefix or null for default</param>
         public IPBanBaseFirewall(string rulePrefix = null)
         {
-            rulePrefix = rulePrefix?.Trim();
             if (!string.IsNullOrWhiteSpace(rulePrefix))
             {
                 RulePrefix = rulePrefix.Trim();
@@ -86,10 +88,11 @@ namespace DigitalRuby.IPBanCore
         /// <summary>
         /// Dispose
         /// </summary>
-        public void Dispose()
+        public virtual void Dispose()
         {
             if (!Disposed)
             {
+                GC.SuppressFinalize(this);
                 Disposed = true;
                 OnDispose();
             }
@@ -104,6 +107,47 @@ namespace DigitalRuby.IPBanCore
         {
             return Task.CompletedTask;
         }
+
+        /// <inheritdoc />
+        public abstract Task<bool> BlockIPAddresses(string ruleNamePrefix, IEnumerable<string> ipAddresses, IEnumerable<PortRange> allowedPorts = null, CancellationToken cancelToken = default);
+
+        /// <inheritdoc />
+        public abstract Task<bool> BlockIPAddressesDelta(string ruleNamePrefix, IEnumerable<IPBanFirewallIPAddressDelta> ipAddresses, IEnumerable<PortRange> allowedPorts = null, CancellationToken cancelToken = default);
+
+        /// <inheritdoc />
+        public abstract Task<bool> BlockIPAddresses(string ruleNamePrefix, IEnumerable<IPAddressRange> ranges, IEnumerable<PortRange> allowedPorts = null, CancellationToken cancelToken = default);
+
+        /// <inheritdoc />
+        public abstract Task<bool> AllowIPAddresses(IEnumerable<string> ipAddresses, CancellationToken cancelToken = default);
+
+        /// <inheritdoc />
+        public abstract Task<bool> AllowIPAddresses(string ruleNamePrefix, IEnumerable<IPAddressRange> ipAddresses, IEnumerable<PortRange> allowedPorts = null, CancellationToken cancelToken = default);
+
+        /// <inheritdoc />
+        public abstract bool IsIPAddressBlocked(string ipAddress, out string ruleName, int port = -1);
+
+        /// <inheritdoc />
+        public abstract bool IsIPAddressAllowed(string ipAddress, int port = -1);
+
+        /// <inheritdoc />
+        public abstract IEnumerable<string> GetRuleNames(string ruleNamePrefix = null);
+
+        /// <inheritdoc />
+        public abstract bool DeleteRule(string ruleName);
+
+        /// <inheritdoc />
+        public abstract IEnumerable<string> EnumerateBannedIPAddresses();
+
+        /// <inheritdoc />
+        public abstract IEnumerable<string> EnumerateAllowedIPAddresses();
+
+        /// <inheritdoc />
+        public abstract IEnumerable<IPAddressRange> EnumerateIPAddresses(string ruleNamePrefix = null);
+
+        /// <summary>
+        /// Truncate
+        /// </summary>
+        public abstract void Truncate();
 
         /// <summary>
         /// Rule prefix - defaults to 'IPBan_'

@@ -1,7 +1,7 @@
 ﻿/*
 MIT License
 
-Copyright (c) 2019 Digital Ruby, LLC - https://www.digitalruby.com
+Copyright (c) 2012-present Digital Ruby, LLC - https://www.digitalruby.com
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -39,6 +39,7 @@ namespace DigitalRuby.IPBanCore
     public class IPBanUriFirewallRule : IUpdater
     {
         private static readonly TimeSpan fiveSeconds = TimeSpan.FromSeconds(5.0);
+        private static readonly TimeSpan thirtySeconds = TimeSpan.FromSeconds(30.0);
 
         private readonly IIPBanFirewall firewall;
         private readonly IIsWhitelisted whitelistChecker;
@@ -88,7 +89,7 @@ namespace DigitalRuby.IPBanCore
                 {
                     uri = new Uri(uri.ToString() + "/");
                 }
-                httpClient = new HttpClient { BaseAddress = uri };
+                httpClient = new HttpClient { BaseAddress = uri, Timeout = thirtySeconds };
             }
         }
 
@@ -143,19 +144,29 @@ namespace DigitalRuby.IPBanCore
             if ((now - lastRun) >= Interval)
             {
                 lastRun = now;
-                if (Uri.IsFile)
+                try
                 {
-                    string filePath = Uri.LocalPath;
-                    if (File.Exists(filePath))
+                    if (Uri.IsFile)
                     {
-                        await ProcessResult(await File.ReadAllTextAsync(filePath, cancelToken), cancelToken);
+                        string filePath = Uri.LocalPath;
+                        if (File.Exists(filePath))
+                        {
+                            await ProcessResult(await File.ReadAllTextAsync(filePath, cancelToken), cancelToken);
+                        }
+                    }
+                    else
+                    {
+                        byte[] bytes = await httpRequestMaker.MakeRequestAsync(Uri, cancelToken: cancelToken);
+                        string text = Encoding.UTF8.GetString(bytes);
+                        await ProcessResult(text, cancelToken);
                     }
                 }
-                else
+                catch (Exception ex)
                 {
-                    byte[] bytes = await httpRequestMaker.MakeRequestAsync(Uri, cancelToken: cancelToken);
-                    string text = Encoding.UTF8.GetString(bytes);
-                    await ProcessResult(text, cancelToken);
+                    if (!(ex is OperationCanceledException))
+                    {
+                        Logger.Error(ex);
+                    }
                 }
             }
         }

@@ -1,7 +1,7 @@
 ﻿/*
 MIT License
 
-Copyright (c) 2019 Digital Ruby, LLC - https://www.digitalruby.com
+Copyright (c) 2012-present Digital Ruby, LLC - https://www.digitalruby.com
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -101,10 +101,12 @@ namespace DigitalRuby.IPBanCore
         /// </summary>
         public static long LocalRequestCount { get { return localRequestCount; } }
 
-        public Task<byte[]> MakeRequestAsync(Uri uri, string postJson = null, IEnumerable<KeyValuePair<string, object>> headers = null,
+        public async Task<byte[]> MakeRequestAsync(Uri uri, string postJson = null, IEnumerable<KeyValuePair<string, object>> headers = null,
             CancellationToken cancelToken = default)
         {
-            if (uri.Host.IndexOf("localhost", StringComparison.OrdinalIgnoreCase) >= 0 || uri.Host.Contains("127.0.0.1") || uri.Host.Contains("::1"))
+            if (uri.Host.StartsWith("localhost", StringComparison.OrdinalIgnoreCase) ||
+                uri.Host.StartsWith("127.0.0.1") ||
+                uri.Host.StartsWith("::1"))
             {
                 Interlocked.Increment(ref localRequestCount);
             }
@@ -144,12 +146,18 @@ namespace DigitalRuby.IPBanCore
                     client.Headers[header.Key] = header.Value.ToHttpHeaderString();
                 }
             }
+            byte[] response;
             if (string.IsNullOrWhiteSpace(postJson))
             {
-                return client.DownloadDataTaskAsync(uri);
+                response = await client.DownloadDataTaskAsync(uri);
             }
-            client.Headers["Content-Type"] = "application/json";
-            return client.UploadDataTaskAsync(uri, "POST", Encoding.UTF8.GetBytes(postJson));
+            else
+            {
+                client.Headers["Content-Type"] = "application/json";
+                response = await client.UploadDataTaskAsync(uri, "POST", Encoding.UTF8.GetBytes(postJson));
+            }
+            //var responseHeaders = client.ResponseHeaders.ToHttpHeaderString();
+            return response;
         }
 
         public IWebProxy Proxy { get; set; }

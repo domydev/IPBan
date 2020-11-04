@@ -1,7 +1,7 @@
 ﻿/*
 MIT License
 
-Copyright (c) 2019 Digital Ruby, LLC - https://www.digitalruby.com
+Copyright (c) 2012-present Digital Ruby, LLC - https://www.digitalruby.com
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -44,6 +44,9 @@ namespace DigitalRuby.IPBanCore
         private string localConfigString;
         private static string lastConfigValue;
         private static DateTime lastConfigWriteTime;
+        private static DateTime lastConfigIntervalTime;
+
+        private static readonly TimeSpan forceLoadInterval = TimeSpan.FromMinutes(5.0);
 
         /// <summary>
         /// Read config
@@ -109,10 +112,16 @@ namespace DigitalRuby.IPBanCore
                 {
                     DateTime lastWriteTime = File.GetLastWriteTimeUtc(Path);
                     string currentConfig = await ReadConfigAsync(false);
-                    if (lastWriteTime != lastConfigWriteTime || currentConfig != lastConfigValue)
+                    if (lastWriteTime != lastConfigWriteTime ||
+                        currentConfig != lastConfigValue ||
+
+                        // if enough time has elapsed, force a reload anyway, in case of dns entries and the
+                        // like in the config that need to be re-resolved
+                        IPBanService.UtcNow - lastConfigIntervalTime > forceLoadInterval)
                     {
                         lastConfigWriteTime = lastWriteTime;
                         lastConfigValue = currentConfig;
+                        lastConfigIntervalTime = IPBanService.UtcNow;
                         result = currentConfig;
                     }
                 });

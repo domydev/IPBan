@@ -1,13 +1,13 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>netcoreapp3.1</TargetFramework>
+    <TargetFramework>net5.0</TargetFramework>
     <RootNamespace>DigitalRuby.IPBanCore</RootNamespace>
     <PreserveCompilationContext>true</PreserveCompilationContext>
     <PackageRequireLicenseAcceptance>true</PackageRequireLicenseAcceptance>
     <PackageId>DigitalRuby.IPBanCore</PackageId>
-    <Version>1.5.6</Version>
-    <Authors>Jeff Johnson</Authors>
+    <Version>1.5.8</Version>
+		<Authors>Jeff Johnson</Authors>
     <Company>Digital Ruby, LLC</Company>
     <Product>IPBan</Product>
     <Description>IPBan is the leading solution to block hackers and botnets. Easily monitor events for all kinds of sources and put the bad ip addresses in the firewall automatically.</Description>
@@ -17,14 +17,17 @@
     <RepositoryUrl>https://github.com/DigitalRuby/IPBan</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <PackageTags>windows linux firewall hacker botnet block rule security software service email smtp rdp remote desktop ssh auto</PackageTags>
-    <PackageReleaseNotes>Upgrade to .NET core 3, split off the core IPBan code into it's own library.</PackageReleaseNotes>
+    <PackageReleaseNotes>Upgrade to .NET core 5</PackageReleaseNotes>
+		<PublishTrimmed>true</PublishTrimmed>
     <NeutralLanguage>en</NeutralLanguage>
     <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
     <AssemblyName>DigitalRuby.IPBanCore</AssemblyName>
     <ApplicationIcon />
     <OutputType>Library</OutputType>
     <StartupObject />
-	<GenerateSerializationAssemblies>Off</GenerateSerializationAssemblies>
+	  <GenerateSerializationAssemblies>Off</GenerateSerializationAssemblies>
+	  <AssemblyVersion>1.5.8</AssemblyVersion>
+	  <FileVersion>1.5.8</FileVersion>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
@@ -36,20 +39,20 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.Data.Sqlite" Version="3.1.3" />
-    <PackageReference Include="Microsoft.Extensions.FileSystemGlobbing" Version="3.1.3" />
-    <PackageReference Include="Microsoft.Extensions.Hosting" Version="3.1.3" />
-    <PackageReference Include="Microsoft.Extensions.Hosting.Systemd" Version="3.1.3" />
-    <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="3.1.3" />
-    <PackageReference Include="Microsoft.Extensions.Logging" Version="3.1.3" />
-    <PackageReference Include="Microsoft.Windows.Compatibility" Version="3.1.0" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="3.1.8" />
+    <PackageReference Include="Microsoft.Extensions.FileSystemGlobbing" Version="3.1.8" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="3.1.8" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.Systemd" Version="3.1.8" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="3.1.8" />
+    <PackageReference Include="Microsoft.Extensions.Logging" Version="3.1.8" />
+    <PackageReference Include="Microsoft.Windows.Compatibility" Version="3.1.1" />
     <PackageReference Include="Newtonsoft.Json" Version="12.0.3" />
-    <PackageReference Include="NLog" Version="4.7.0" />
-    <PackageReference Include="System.Threading.Tasks.Dataflow" Version="4.11.0" />
+    <PackageReference Include="NLog" Version="4.7.4" />
+    <PackageReference Include="System.Threading.Tasks.Dataflow" Version="4.11.1" />
   </ItemGroup>
 
   <ItemGroup>
-    <Content Include="DigitalRuby.IPBan.dll.config">
+    <Content Include="ipban.config">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
   </ItemGroup>

@@ -1,7 +1,7 @@
 ﻿/*
 MIT License
 
-Copyright (c) 2019 Digital Ruby, LLC - https://www.digitalruby.com
+Copyright (c) 2012-present Digital Ruby, LLC - https://www.digitalruby.com
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -57,14 +57,14 @@ namespace DigitalRuby.IPBanCore
 
         private async Task FirewallTask(AsyncQueue<Func<CancellationToken, Task>> queue)
         {
-            while (!serviceCancelTokenSource.IsCancellationRequested)
+            while (!CancelToken.IsCancellationRequested)
             {
-                KeyValuePair<bool, Func<CancellationToken, Task>> nextAction = await queue.TryDequeueAsync(serviceCancelTokenSource.Token);
+                KeyValuePair<bool, Func<CancellationToken, Task>> nextAction = await queue.TryDequeueAsync(CancelToken);
                 if (nextAction.Key && nextAction.Value != null)
                 {
                     try
                     {
-                        await nextAction.Value.Invoke(serviceCancelTokenSource.Token);
+                        await nextAction.Value.Invoke(CancelToken);
                     }
                     catch (Exception ex)
                     {
@@ -73,21 +73,19 @@ namespace DigitalRuby.IPBanCore
                 }
             }
         }
-
         
-
-        internal async Task ReadAppSettings()
+        internal async Task UpdateConfiguration()
         {
             try
             {
-                ConfigFilePath = (!File.Exists(ConfigFilePath) ? Path.Combine(AppContext.BaseDirectory, IPBanService.ConfigFileName) : ConfigFilePath);
+                ConfigFilePath = (!File.Exists(ConfigFilePath) ? Path.Combine(AppContext.BaseDirectory, IPBanConfig.DefaultFileName) : ConfigFilePath);
                 string newXml = await ConfigReaderWriter.CheckForConfigChange();
                 if (!string.IsNullOrWhiteSpace(newXml))
                 {
                     IPBanConfig oldConfig = Config;
-                    IPBanConfig newConfig = IPBanConfig.LoadFromXml(newXml, DnsLookup);
+                    IPBanConfig newConfig = IPBanConfig.LoadFromXml(newXml, DnsLookup, DnsList, RequestMaker);
                     ConfigChanged?.Invoke(newConfig);
-                    whitelistChanged = (Config is null || Config.WhiteList != newConfig.WhiteList || Config.WhiteListRegex != newConfig.WhiteListRegex);
+                    whitelistChanged = (Config is null || Config.Whitelist != newConfig.Whitelist || Config.WhitelistRegex != newConfig.WhitelistRegex);
                     Config = newConfig;
                     LoadFirewall(oldConfig);
                     ParseAndAddUriFirewallRules(newConfig);
@@ -142,7 +140,7 @@ namespace DigitalRuby.IPBanCore
                 string serverName = System.Environment.MachineName;
                 try
                 {
-                    FQDN = (await DnsLookup.GetHostEntryAsync(serverName)).HostName;
+                    FQDN = await DnsLookup.GetHostNameAsync();
                 }
                 catch
                 {
@@ -207,7 +205,8 @@ namespace DigitalRuby.IPBanCore
                             }
                             else
                             {
-                                maxFailedLoginAttempts = Config.FailedLoginAttemptsBeforeBan;
+                                // see if there is an override for max failed login attempts
+                                maxFailedLoginAttempts = (failedLogin.FailedLoginThreshold > 0 ? failedLogin.FailedLoginThreshold : Config.FailedLoginAttemptsBeforeBan);
                             }
 
                             DateTime now = failedLogin.Timestamp;
@@ -231,8 +230,8 @@ namespace DigitalRuby.IPBanCore
                                 Logger.Info("IP blacklisted: {0}, user name blacklisted: {1}, fails user name white list regex: {2}, user name edit distance blacklisted: {3}",
                                     ipBlacklisted, userBlacklisted, userFailsWhitelistRegex, editDistanceBlacklisted);
 
-                                if (ipDB.TryGetIPAddressState(ipAddress, out IPBanDB.IPAddressState state, transaction) &&
-                                    (state == IPBanDB.IPAddressState.Active || state == IPBanDB.IPAddressState.AddPending))
+                                if (ipDB.TryGetIPAddressState(ipAddress, out IPBanDB.IPAddressState? state, transaction) &&
+                                    (state.Value == IPBanDB.IPAddressState.Active || state.Value == IPBanDB.IPAddressState.AddPending))
                                 {
                                     Logger.Warn(now, "IP {0}, {1}, {2} ban pending.", ipAddress, userName, source);
                                 }
@@ -241,23 +240,24 @@ namespace DigitalRuby.IPBanCore
                                     Logger.Debug("Failed login count {0} >= ban count {1}{2}", newCount, maxFailedLoginAttempts, (configBlacklisted ? " config blacklisted" : string.Empty));
 
                                     // if delegate and non-zero count, forward on - count of 0 means it was from external source, like a delegate
-                                    if (IPBanDelegate != null && failedLogin.Count > 0)
+                                    if (IPBanDelegate != null && !failedLogin.External)
                                     {
                                         await IPBanDelegate.LoginAttemptFailed(ipAddress, source, userName, MachineGuid, OSName, OSVersion, UtcNow);
                                     }
-                                    AddBannedIPAddress(ipAddress, source, userName, bannedIpAddresses, now, configBlacklisted, newCount, string.Empty, transaction);
+                                    AddBannedIPAddress(ipAddress, source, userName, bannedIpAddresses, now,
+                                        configBlacklisted, newCount, string.Empty, transaction, failedLogin.External);
                                 }
                             }
                             else
                             {
                                 Logger.Debug("Failed login count {0} <= ban count {1}", newCount, maxFailedLoginAttempts);
-                                if (OSUtility.Instance.UserIsActive(userName))
+                                if (OSUtility.UserIsActive(userName))
                                 {
                                     Logger.Warn("Login failed for known active user {0}", userName);
                                 }
 
                                 // if delegate and non-zero count, forward on - count of 0 means it was from external source, like a delegate
-                                if (IPBanDelegate != null && failedLogin.Count > 0)
+                                if (IPBanDelegate != null && !failedLogin.External)
                                 {
                                     await IPBanDelegate.LoginAttemptFailed(ipAddress, source, userName, MachineGuid, OSName, OSVersion, UtcNow);
                                 }
@@ -284,6 +284,11 @@ namespace DigitalRuby.IPBanCore
             foreach (IPAddressLogEvent info in ipAddresses)
             {
                 Logger.Warn("Login succeeded, address: {0}, user name: {1}, source: {2}", info.IPAddress, info.UserName, info.Source);
+                if (Config.ClearFailedLoginsOnSuccessfulLogin)
+                {
+                    DB.DeleteIPAddress(info.IPAddress);
+                    firewallNeedsBlockedIPAddressesUpdate = true;
+                }
             }
             if (IPBanDelegate != null)
             {
@@ -319,8 +324,9 @@ namespace DigitalRuby.IPBanCore
             }
         }
 
-        private void AddBannedIPAddress(string ipAddress, string source, string userName, List<IPAddressLogEvent> bannedIpAddresses,
-            DateTime startBanDate, bool configBlacklisted, int counter, string extraInfo, object transaction)
+        private void AddBannedIPAddress(string ipAddress, string source, string userName,
+            List<IPAddressLogEvent> bannedIpAddresses, DateTime startBanDate, bool configBlacklisted,
+            int counter, string extraInfo, object transaction, bool external)
         {
             // never ban whitelisted ip addresses
             if (IsWhitelisted(ipAddress))
@@ -330,7 +336,8 @@ namespace DigitalRuby.IPBanCore
             }
 
             TimeSpan[] banTimes = Config.BanTimes;
-            DateTime banEndDate = startBanDate + banTimes.First();
+            TimeSpan banTime = banTimes.First();
+            DateTime banEndDate = startBanDate + banTime;
 
             // if we have an ip in the database, use the ban time to move to the next ban slot in the list of ban times
             // if ban times only has one entry, do not do this
@@ -339,13 +346,14 @@ namespace DigitalRuby.IPBanCore
                 ipEntry.BanStartDate != null && ipEntry.BanEndDate != null)
             {
                 // find the next ban time in the array
-                TimeSpan span = ipEntry.BanEndDate.Value - ipEntry.BanStartDate.Value;
+                banTime = ipEntry.BanEndDate.Value - ipEntry.BanStartDate.Value;
                 for (int i = 0; i < banTimes.Length; i++)
                 {
-                    if (span < banTimes[i])
+                    if (banTime < banTimes[i])
                     {
                         // ban for next timespan
-                        banEndDate = startBanDate + banTimes[i];
+                        banTime = banTimes[i];
+                        banEndDate = startBanDate + banTime;
                         Logger.Info("Moving to next ban duration {0} at index {1} for ip {1}", banTimes[i], i, ipAddress);
                         break;
                     }
@@ -358,8 +366,8 @@ namespace DigitalRuby.IPBanCore
                 firewallNeedsBlockedIPAddressesUpdate = true;
             }
 
-            Logger.Warn(startBanDate, "Banning ip address: {0}, user name: {1}, config black listed: {2}, count: {3}, extra info: {4}",
-                ipAddress, userName, configBlacklisted, counter, extraInfo);
+            Logger.Warn(startBanDate, "Banning ip address: {0}, user name: {1}, config black listed: {2}, count: {3}, extra info: {4}, duration: {5}",
+                ipAddress, userName, configBlacklisted, counter, extraInfo, banTime);
 
             // if this is a delegate callback (counter of 0), exit out - we don't want to run handlers or processes for shared banned ip addresses
             if (counter <= 0)
@@ -380,7 +388,7 @@ namespace DigitalRuby.IPBanCore
                 }
             }
 
-            if (IPBanDelegate != null)
+            if (IPBanDelegate != null && !external)
             {
                 try
                 {
@@ -419,11 +427,17 @@ namespace DigitalRuby.IPBanCore
                             string[] pieces = programToRunConfigString.Split('|');
                             if (pieces.Length == 2)
                             {
-                                string program = pieces[0];
-                                string arguments = pieces[1];
-                                Process.Start(program, arguments.Replace("###IPADDRESS###", bannedIp.IPAddress)
+                                string program = Path.GetFullPath(pieces[0]);
+                                string arguments = pieces[1].Replace("###IPADDRESS###", bannedIp.IPAddress)
                                     .Replace("###SOURCE###", bannedIp.Source)
-                                    .Replace("###USERNAME###", bannedIp.UserName));
+                                    .Replace("###USERNAME###", bannedIp.UserName);
+                                ProcessStartInfo psi = new ProcessStartInfo
+                                {
+                                    FileName = program,
+                                    WorkingDirectory = Path.GetDirectoryName(program),
+                                    Arguments = arguments
+                                };
+                                Process.Start(psi);
                             }
                             else
                             {
@@ -441,6 +455,12 @@ namespace DigitalRuby.IPBanCore
 
         private void UpdateBannedIPAddressesOnStart()
         {
+            if (updateBannedIPAddressesOnStartCalled)
+            {
+                return;
+            }
+            updateBannedIPAddressesOnStartCalled = true;
+
             if (Config.ClearBannedIPAddressesOnRestart)
             {
                 Logger.Warn("Clearing all banned ip addresses on start because ClearBannedIPAddressesOnRestart is set");
@@ -477,10 +497,10 @@ namespace DigitalRuby.IPBanCore
         private void LoadFirewall(IPBanConfig oldConfig)
         {
             IIPBanFirewall existing = Firewall;
-            Firewall = IPBanFirewallUtility.CreateFirewall(Config.FirewallOSAndType, Config.FirewallRulePrefix, Firewall);
-            AddUpdater(Firewall);
+            Firewall = FirewallCreator.CreateFirewall(Config, Firewall);
             if (existing != Firewall)
             {
+                AddUpdater(Firewall);
                 Logger.Warn("Loaded firewall type {0}", Firewall.GetType());
                 if (existing != null)
                 {
@@ -518,7 +538,17 @@ namespace DigitalRuby.IPBanCore
                 }
             }
 
-            // add/update new rules
+            // ensure firewall is cleared out if needed - will only execute once
+            UpdateBannedIPAddressesOnStart();
+
+            // ensure windows event viewer is setup if needed - will only execute once
+            SetupWindowsEventViewer();
+
+            // add/update global rules
+            Firewall.AllowIPAddresses("GlobalWhitelist", Config.Whitelist);
+            Firewall.BlockIPAddresses("GlobalBlacklist", Config.BlackList);
+
+            // add/update user specified rules
             foreach (IPBanFirewallRule rule in Config.ExtraRules)
             {
                 if (rule.Block)
@@ -688,6 +718,8 @@ namespace DigitalRuby.IPBanCore
             }
         }
 
+        protected virtual Task OnUpdate() => Task.CompletedTask;
+
         protected virtual async Task<bool> GetUrl(UrlType urlType)
         {
             if ((urlType == UrlType.Start && GotStartUrl) || string.IsNullOrWhiteSpace(LocalIPAddressString) || string.IsNullOrWhiteSpace(FQDN))
@@ -724,7 +756,7 @@ namespace DigitalRuby.IPBanCore
                         // if the update url sends bytes, we assume a software update, and run the result as an .exe
                         if (bytes.Length != 0)
                         {
-                            string tempFile = Path.Combine(OSUtility.Instance.TempFolder, "IPBanServiceUpdate.exe");
+                            string tempFile = Path.Combine(OSUtility.TempFolder, "IPBanServiceUpdate.exe");
                             File.WriteAllBytes(tempFile, bytes);
 
                             // however you are doing the update, you must allow -c and -d parameters
@@ -769,7 +801,7 @@ namespace DigitalRuby.IPBanCore
             {
                 try
                 {
-                    await updater.Update(serviceCancelTokenSource.Token);
+                    await updater.Update(CancelToken);
                 }
                 catch (Exception ex)
                 {
@@ -788,7 +820,7 @@ namespace DigitalRuby.IPBanCore
                 Logger.Info("Firewall entries updated: {0}", string.Join(',', deltas.Select(d => d.IPAddress)));
                 if (MultiThreaded)
                 {
-                    RunFirewallTask((token) => Firewall.BlockIPAddressesDelta(null, deltas, null, token), "Default");
+                    RunFirewallTask((token) => Firewall.BlockIPAddressesDelta(null, deltas, null, token));
                 }
                 else
                 {
@@ -799,46 +831,37 @@ namespace DigitalRuby.IPBanCore
             return Task.CompletedTask;
         }
 
-        private async Task CycleTimerElapsed(object sender, System.Timers.ElapsedEventArgs e)
+        private async Task CycleTimerElapsed()
         {
             if (IsRunning)
             {
-                try
-                {
-                    cycleTimer.Stop();
-                    await RunCycle();
-                }
-                catch (Exception ex)
-                {
-                    // should not get here, but if we do log it and sleep a bit in case of repeating error
-                    Logger.Error(ex);
-                    Thread.Sleep(5000);
-                }
-                finally
-                {
-                    try
-                    {
-                        cycleTimer.Interval = Math.Min(60000.0, Math.Max(1000.0, Config.CycleTime.TotalMilliseconds));
-                        cycleTimer.Start();
-                    }
-                    catch
-                    {
-                    }
-                }
                 Logger.Trace("CycleTimerElapsed");
+
+                // perform the cycle, will not throw out
+                await RunCycleAsync();
+
+                // if we have no config at this point, use a 5 second cycle under the 
+                // assumption that something threw an exception and will hopefully
+                // succeed after a short break and another cycle
+                int nextTimerMilliseconds = Math.Min(60000, Math.Max(1000,
+                    (Config is null ? 5000 : (int)Config.CycleTime.TotalMilliseconds)));
+
+                // configure the timer to run again
+                cycleTimer.Change(nextTimerMilliseconds, Timeout.Infinite);
             }
         }
 
-        private void ProcessIPAddressEvent(IPAddressLogEvent newEvent, List<IPAddressLogEvent> pendingEvents, TimeSpan minTimeBetweenEvents, string type)
+        private static void ProcessIPAddressEvent(IPAddressLogEvent newEvent, List<IPAddressLogEvent> pendingEvents,
+            TimeSpan minTimeBetweenEvents, string type)
         {
-            if (newEvent.Count <= 0)
+            if (newEvent.Type != IPAddressEventType.FailedLogin &&
+                newEvent.Type != IPAddressEventType.SuccessfulLogin)
             {
-                // callback from somewhere else external
                 return;
             }
 
-            newEvent.Source = (newEvent.Source ?? "?");
-            newEvent.UserName = (newEvent.UserName ?? string.Empty);
+            newEvent.Source ??= "?";
+            newEvent.UserName ??= string.Empty;
 
             lock (pendingEvents)
             {
@@ -849,12 +872,22 @@ namespace DigitalRuby.IPBanCore
                 }
                 else
                 {
-                    existing.UserName = (existing.UserName ?? newEvent.UserName);
+                    existing.UserName ??= newEvent.UserName;
+
+                    if (existing.FailedLoginThreshold <= 0)
+                    {
+                        existing.FailedLoginThreshold = newEvent.FailedLoginThreshold;
+                    }
 
                     // if more than n seconds has passed, increment the counter
                     // we don't want to count multiple events that all map to the same ip address that happen rapidly
                     // multiple logs or event viewer entries can trigger quickly, piling up the counter too fast,
                     // locking out even a single failed login for example
+                    if (newEvent.Type == IPAddressEventType.SuccessfulLogin)
+                    {
+                        // for success logins increase time to log between events as some events (SSH) are reported multiple times
+                        minTimeBetweenEvents = TimeSpan.FromSeconds(15.0);
+                    }
                     if ((UtcNow - existing.Timestamp) >= minTimeBetweenEvents)
                     {
                         // update to the latest timestamp of the event
@@ -949,7 +982,12 @@ namespace DigitalRuby.IPBanCore
                     switch (evt.Type)
                     {
                         case IPAddressEventType.FailedLogin:
-                            ProcessIPAddressEvent(evt, pendingFailedLogins, Config.MinimumTimeBetweenFailedLoginAttempts, "failed");
+                            // if we are not already banned...
+                            if (!DB.TryGetIPAddressState(evt.IPAddress, out IPBanDB.IPAddressState? state, transaction) ||
+                                state.Value == IPBanDB.IPAddressState.FailedLogin)
+                            {
+                                ProcessIPAddressEvent(evt, pendingFailedLogins, Config.MinimumTimeBetweenFailedLoginAttempts, "failed");
+                            }
                             break;
 
                         case IPAddressEventType.SuccessfulLogin:
@@ -957,8 +995,14 @@ namespace DigitalRuby.IPBanCore
                             break;
 
                         case IPAddressEventType.Blocked:
-                            // make sure the ip address is ban pending
-                            AddBannedIPAddress(evt.IPAddress, evt.Source, evt.UserName, bannedIPs, evt.Timestamp, false, evt.Count, string.Empty, transaction);
+                            // if we are not already banned...
+                            if (!DB.TryGetIPAddressState(evt.IPAddress, out IPBanDB.IPAddressState? state2, transaction) ||
+                                state2.Value == IPBanDB.IPAddressState.FailedLogin)
+                            {
+                                // make sure the ip address is ban pending
+                                AddBannedIPAddress(evt.IPAddress, evt.Source, evt.UserName, bannedIPs,
+                                evt.Timestamp, false, evt.Count, string.Empty, transaction, evt.External);
+                            }
                             break;
 
                         case IPAddressEventType.Unblocked:
@@ -978,9 +1022,11 @@ namespace DigitalRuby.IPBanCore
             return Task.CompletedTask;
         }
 
-        private void AddWindowsEventViewer()
+        private void SetupWindowsEventViewer()
         {
-            if (UseWindowsEventViewer && RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            if (EventViewer is null &&
+                UseWindowsEventViewer &&
+                RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
             {
                 // attach Windows event viewer to the service
                 EventViewer = new IPBanWindowsEventViewer(this);
@@ -1028,9 +1074,10 @@ namespace DigitalRuby.IPBanCore
             }
 
             // remove any left-over rules that were not in the new config
-            foreach (IPBanUriFirewallRule updater in toRemove)
+            foreach (IPBanUriFirewallRule updater in toRemove.ToArray())
             {
                 updater.DeleteRule();
+                RemoveUpdater(updater);
             }
         }
 

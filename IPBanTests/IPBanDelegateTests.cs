@@ -1,7 +1,7 @@
 ﻿/*
 MIT License
 
-Copyright (c) 2019 Digital Ruby, LLC - https://www.digitalruby.com
+Copyright (c) 2012-present Digital Ruby, LLC - https://www.digitalruby.com
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -79,7 +79,7 @@ namespace DigitalRuby.IPBanTests
         private void AddLoginEvents()
         {
             service.AddIPAddressLogEvents(new IPAddressLogEvent[] { info1, info2, info3 });
-            service.RunCycle().Sync();
+            service.RunCycleAsync().Sync();
 
             Assert.AreEqual(6, events.Count);
             AssertEvent("LoginAttemptSucceeded_99.99.99.97_SSH_test_user3", 1);

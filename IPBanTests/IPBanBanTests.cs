@@ -1,7 +1,7 @@
 ﻿/*
 MIT License
 
-Copyright (c) 2019 Digital Ruby, LLC - https://www.digitalruby.com
+Copyright (c) 2012-present Digital Ruby, LLC - https://www.digitalruby.com
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -39,6 +39,8 @@ namespace DigitalRuby.IPBanTests
     [TestFixture]
     public class IPBanBanTests
     {
+
+
         private const string ip1 = "99.99.99.97";
         private const string ip2 = "99.99.99.98";
         private const string ip3 = "99.99.99.99";
@@ -72,7 +74,7 @@ namespace DigitalRuby.IPBanTests
                 new IPAddressLogEvent(info1.IPAddress, info1.UserName, info1.Source, count1, info1.Type),
                 new IPAddressLogEvent(info2.IPAddress, info2.UserName, info2.Source, count2, info2.Type)
             });
-            service.RunCycle().Sync();
+            service.RunCycleAsync().Sync();
         }
 
         private void AssertIPAddressesAreBanned(int failCount1 = -1, int failCount2 = -1)
@@ -127,13 +129,13 @@ namespace DigitalRuby.IPBanTests
 
             // forget all the bans
             IPBanService.UtcNow += TimeSpan.FromDays(14.0);
-            service.RunCycle().Sync();
+            service.RunCycleAsync().Sync();
 
             AssertIPAddressesAreNotBanned();
 
             // add a single failed login, should not cause a block
             service.AddIPAddressLogEvents(new IPAddressLogEvent[] { info3 });
-            service.RunCycle().Sync();
+            service.RunCycleAsync().Sync();
             AssertIPAddressesAreNotBanned(true, false);
         }
 
@@ -145,7 +147,7 @@ namespace DigitalRuby.IPBanTests
             {
                 new IPAddressLogEvent("10.11.12.13", "TestUser", "RDP", 0, IPAddressEventType.Blocked, new DateTime(2020, 01, 01))
             });
-            service.RunCycle().Sync();
+            service.RunCycleAsync().Sync();
             Assert.IsTrue(service.Firewall.IsIPAddressBlocked("10.11.12.13", out _));
         }
 
@@ -154,7 +156,7 @@ namespace DigitalRuby.IPBanTests
         {
             // put an ban.txt file in path, service should pick it up and ban the ip addresses
             File.WriteAllLines(service.BlockIPAddressesFileName, new string[] { ip1, ip2 });
-            service.RunCycle().Sync();
+            service.RunCycleAsync().Sync();
             AssertIPAddressesAreBanned(0, 0);
         }
 
@@ -165,7 +167,7 @@ namespace DigitalRuby.IPBanTests
                 new IPAddressLogEvent(ip2, string.Empty, string.Empty, 1, IPAddressEventType.Blocked) });
 
             // this should block the ip addresses
-            service.RunCycle().Sync();
+            service.RunCycleAsync().Sync();
             AssertIPAddressesAreBanned(0, 0);
         }
 
@@ -179,7 +181,7 @@ namespace DigitalRuby.IPBanTests
             File.WriteAllLines(service.UnblockIPAddressesFileName, new string[] { ip1, ip2 });
 
             // this should un ban the ip addresses
-            service.RunCycle().Sync();
+            service.RunCycleAsync().Sync();
 
             AssertIPAddressesAreNotBanned();
             AssertNoIPInDB();
@@ -195,7 +197,7 @@ namespace DigitalRuby.IPBanTests
                 new IPAddressLogEvent(ip2, string.Empty, string.Empty, 1, IPAddressEventType.Unblocked) });
 
             // this should unblock the ip addresses
-            service.RunCycle().Sync();
+            service.RunCycleAsync().Sync();
 
             AssertIPAddressesAreNotBanned();
             AssertNoIPInDB();
@@ -209,21 +211,21 @@ namespace DigitalRuby.IPBanTests
                 // prime Linux log files
                 IPBanPlugin.IPBanLoginFailed("SSH", "User1", "78.88.88.88");
             }
-            service.RunCycle().Sync();
+            service.RunCycleAsync().Sync();
             for (int i = 0; i < 5; i++)
             {
                 IPBanPlugin.IPBanLoginFailed("SSH", "User1", "88.88.88.88");
-                service.RunCycle().Sync();
+                service.RunCycleAsync().Sync();
 
                 // attempt to read failed logins, if they do not match, sleep a bit and try again
                 for (int j = 0; j < 10 && (!service.DB.TryGetIPAddress("88.88.88.88", out IPBanDB.IPAddressEntry e) || e.FailedLoginCount != i + 1); j++)
                 {
                     System.Threading.Thread.Sleep(100);
-                    service.RunCycle().Sync();
+                    service.RunCycleAsync().Sync();
                 }
                 IPBanService.UtcNow += TimeSpan.FromMinutes(5.0);
             }
-            service.RunCycle().Sync();
+            service.RunCycleAsync().Sync();
             Assert.IsTrue(service.Firewall.IsIPAddressBlocked("88.88.88.88", out _));
 
             if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
@@ -239,23 +241,23 @@ namespace DigitalRuby.IPBanTests
                 string file = @"C:/IPBanCustomLogs/ipbancustom_test.log";
                 Directory.CreateDirectory(Path.GetDirectoryName(file));
                 ExtensionMethods.FileWriteAllTextWithRetry(file, "awerfoajwerp jaeowr paojwer " + Environment.NewLine);
-                service.RunCycle().Sync();
+                service.RunCycleAsync().Sync();
                 System.Threading.Thread.Sleep(100);
-                service.RunCycle().Sync();
+                service.RunCycleAsync().Sync();
                 string data = "ipban failed login, ip address: 99.99.99.99, source: SSH, user: User2" + Environment.NewLine;
                 for (int i = 0; i < 5; i++)
                 {
                     File.AppendAllText(file, data);
                     IPBanService.UtcNow += TimeSpan.FromMinutes(5.0);
-                    service.RunCycle().Sync();
+                    service.RunCycleAsync().Sync();
 
                     // attempt to read failed logins, if they do not match, sleep a bit and try again
                     for (int j = 0; j < 10 && (!service.DB.TryGetIPAddress("99.99.99.99", out IPBanDB.IPAddressEntry e) || e.FailedLoginCount != i + 1); j++)
                     {
                         System.Threading.Thread.Sleep(100);
-                        service.RunCycle().Sync();
+                        service.RunCycleAsync().Sync();
                     }
-                    service.RunCycle().Sync();
+                    service.RunCycleAsync().Sync();
                 }
                 try
                 {
@@ -271,15 +273,15 @@ namespace DigitalRuby.IPBanTests
         }
 
         [Test]
-        public async Task TestExtraFirewallRules()
+        public void TestExtraFirewallRules()
         {
-            string config = await service.ReadConfigAsync();
-            string newConfig = IPBanConfig.ChangeConfigAppSetting(config, "FirewallRules", @"
-                ReddisAllowIP;allow;10.0.0.1,10.0.0.2,192.168.1.168/24;6379;.
-                WebOnly;block;0.0.0.0/1,128.0.0.0/1,::/1,8000::/1;22,80,443,3389;^(?:(?!Windows).)+$
-            ");
-            await service.WriteConfigAsync(newConfig);
-            await service.RunCycle();
+            using IPBanConfig.TempConfigChanger configChanger = new IPBanConfig.TempConfigChanger(service, xml =>
+            {
+                return IPBanConfig.ChangeConfigAppSetting(xml, "FirewallRules", @"
+                    ReddisAllowIP;allow;10.0.0.1,10.0.0.2,192.168.1.168/24;6379;.
+                    WebOnly;block;0.0.0.0/1,128.0.0.0/1,::/1,8000::/1;22,80,443,3389;^(?:(?!Windows).)+$");
+            }, out string newConfig);
+
             List<string> rules = service.Firewall.GetRuleNames().ToList();
             string reddisRule = service.Firewall.RulePrefix + "EXTRA_ReddisAllowIP";
             string webRule = service.Firewall.RulePrefix + "EXTRA_WebOnly";
@@ -311,10 +313,11 @@ namespace DigitalRuby.IPBanTests
         [Test]
         public async Task TestUserNameBan()
         {
-            string config = await service.ReadConfigAsync();
-            string newConfig = IPBanConfig.ChangeConfigAppSetting(config, "Blacklist", "NaughtyUserName");
-            await service.WriteConfigAsync(newConfig);
-            await service.RunCycle();
+            using IPBanConfig.TempConfigChanger configChanger = new IPBanConfig.TempConfigChanger(service, xml =>
+            {
+                return IPBanConfig.ChangeConfigAppSetting(xml, "Blacklist", "NaughtyUserName");
+            }, out string newConfig);
+
             service.AddIPAddressLogEvents(new IPAddressLogEvent[]
             {
                 // a single failed login with a non-blacklisted user name should not get banned
@@ -323,7 +326,7 @@ namespace DigitalRuby.IPBanTests
                 // a single failed login with a blacklisted user name should get banned
                 new IPAddressLogEvent("99.99.99.90", "NaughtyUserName", "RDP", 1, IPAddressEventType.FailedLogin)
             });
-            await service.RunCycle();
+            await service.RunCycleAsync();
             Assert.IsTrue(service.Firewall.IsIPAddressBlocked("99.99.99.90", out _));
             Assert.IsFalse(service.Firewall.IsIPAddressBlocked("99.99.99.99", out _));
         }
@@ -331,138 +334,304 @@ namespace DigitalRuby.IPBanTests
         [Test]
         public async Task TestUserNameWhitelistRegexBan()
         {
-            string config = await service.ReadConfigAsync();
-            string newConfig = IPBanConfig.ChangeConfigAppSetting(config, "UserNameWhitelistRegex", "ftp_[0-9]+");
-            await service.WriteConfigAsync(newConfig);
-            await service.RunCycle();
+            using IPBanConfig.TempConfigChanger configChanger = new IPBanConfig.TempConfigChanger(service, xml =>
+            {
+                return IPBanConfig.ChangeConfigAppSetting(xml, "UserNameWhitelistRegex", "ftp_[0-9]+");
+            }, out string newConfig);
+
             service.AddIPAddressLogEvents(new IPAddressLogEvent[]
             {
                 // a single failed login with a non-blacklisted user name should not get banned
                 new IPAddressLogEvent("99.99.99.99", "ftp_1", "RDP", 1, IPAddressEventType.FailedLogin),
 
-                // a single failed login with a faield user name whitelist regex should get banned
+                // a single failed login with a failed user name whitelist regex should get banned
                 new IPAddressLogEvent("99.99.99.90", "NaughtyUserName", "RDP", 1, IPAddressEventType.FailedLogin)
             });
-            await service.RunCycle();
+            await service.RunCycleAsync();
             Assert.IsTrue(service.Firewall.IsIPAddressBlocked("99.99.99.90", out _));
             Assert.IsFalse(service.Firewall.IsIPAddressBlocked("99.99.99.99", out _));
         }
 
+        [Test]
+        public void TestUserNameWhitelistBan()
+        {
+            using IPBanConfig.TempConfigChanger configChanger = new IPBanConfig.TempConfigChanger(service, xml =>
+            {
+                return IPBanConfig.ChangeConfigAppSetting(xml, "UserNameWhitelist", "OnlyMe");
+            }, out string newConfig);
+
+            // TODO: ensure non OnlyMe users are banned immediately
+            // TODO: ensure OnlyMe user gets 20 failed logins before ban
+        }
+
+        [Test]
+        public async Task TestBanOverrideFailedLoginThreshold()
+        {
+            service.AddIPAddressLogEvents(new IPAddressLogEvent[]
+            {
+                new IPAddressLogEvent("10.11.12.13", "TestUser", "RDP", 9, IPAddressEventType.FailedLogin,
+                    new DateTime(2020, 01, 01), failedLoginThreshold: 10)
+            });
+
+            await service.RunCycleAsync();
+            Assert.IsFalse(service.Firewall.IsIPAddressBlocked("10.11.12.13"));
+
+            service.AddIPAddressLogEvents(new IPAddressLogEvent[]
+            {
+                new IPAddressLogEvent("10.11.12.13", "TestUser", "RDP", 1, IPAddressEventType.FailedLogin,
+                    new DateTime(2020, 01, 01), failedLoginThreshold: 10)
+            });
+
+            await service.RunCycleAsync();
+            Assert.IsTrue(service.Firewall.IsIPAddressBlocked("10.11.12.13"));
+        }
+
         private async Task TestMultipleBanTimespansAsync(bool resetFailedLogin)
         {
-            string config = await service.ReadConfigAsync();
-            string newConfig = IPBanConfig.ChangeConfigAppSetting(config, "BanTime", "00:00:01:00,00:00:02:00,00:00:03:00");
-            newConfig = IPBanConfig.ChangeConfigAppSetting(newConfig, "ResetFailedLoginCountForUnbannedIPAddresses", resetFailedLogin.ToString());
-            await service.WriteConfigAsync(newConfig);
-            try
+            using IPBanConfig.TempConfigChanger configChanger = new IPBanConfig.TempConfigChanger(service, xml =>
             {
-                await service.RunCycle();
-                Assert.AreEqual(3, service.Config.BanTimes.Length);
-                Assert.AreEqual(resetFailedLogin, service.Config.ResetFailedLoginCountForUnbannedIPAddresses);
-                for (int i = 1; i <= 3; i++)
-                {
-                    Assert.AreEqual(TimeSpan.FromMinutes(i), service.Config.BanTimes[i - 1]);
-                }
+                xml = IPBanConfig.ChangeConfigAppSetting(xml, "BanTime", "00:00:01:00,00:00:02:00,00:00:03:00");
+                xml = IPBanConfig.ChangeConfigAppSetting(xml, "ResetFailedLoginCountForUnbannedIPAddresses", resetFailedLogin.ToString());
+                return xml;
+            }, out string newConfig);
 
-                for (int i = 0; i < 4; i++)
-                {
-                    // forget all the bans, but they should still be in the database due to the multiple timespans as failed logins
-                    IPBanService.UtcNow += TimeSpan.FromDays(14.0);
-                    await service.RunCycle();
+            Assert.AreEqual(3, service.Config.BanTimes.Length);
+            Assert.AreEqual(resetFailedLogin, service.Config.ResetFailedLoginCountForUnbannedIPAddresses);
+            for (int i = 1; i <= 3; i++)
+            {
+                Assert.AreEqual(TimeSpan.FromMinutes(i), service.Config.BanTimes[i - 1]);
+            }
 
-                    if (i < 3)
+            for (int i = 0; i < 4; i++)
+            {
+                // forget all the bans, but they should still be in the database due to the multiple timespans as failed logins
+                IPBanService.UtcNow += TimeSpan.FromDays(14.0);
+                await service.RunCycleAsync();
+
+                if (i < 3)
+                {
+                    if (i > 0)
+                    {
+                        // the ips should exist but not be banned
+                        AssertIPAddressesAreNotBanned(true, true);
+                    }
+
+                    AddFailedLogins((i == 0 ? -1 : 1));
+
+                    if (resetFailedLogin)
                     {
                         if (i > 0)
                         {
+                            // after one failed login, should not be banned
                             AssertIPAddressesAreNotBanned(true, true);
                         }
 
-                        AddFailedLogins((i == 0 ? -1 : 1));
+                        // add more failed logins
+                        AddFailedLogins();
 
-                        if (resetFailedLogin)
-                        {
-                            if (i > 0)
-                            {
-                                // after one fail login, should not be banned
-                                AssertIPAddressesAreNotBanned(true, true);
-                            }
-
-                            // add more failed logins
-                            AddFailedLogins();
-
-                            // now they should be banned, fail login counts are reset upon ban
-                            AssertIPAddressesAreBanned(0, 0);
-                        }
-                        else
-                        {
-                            // should have gotten back in with just a single failed login
-                            AssertIPAddressesAreBanned(info1.Count + i, info2.Count + i);
-                        }
-
-                        Assert.IsTrue(service.DB.TryGetIPAddress(ip1, out IPBanDB.IPAddressEntry e1));
-                        Assert.IsTrue(service.DB.TryGetIPAddress(ip2, out IPBanDB.IPAddressEntry e2));
-
-                        // i == 3 means wrap around from 3 minutes back to 1 minute
-                        TimeSpan expectedBanDuration = (i < 3 ? expectedBanDuration = TimeSpan.FromMinutes(i + 1) : TimeSpan.FromMinutes(1.0));
-                        Assert.AreEqual(expectedBanDuration, e1.BanEndDate - e1.BanStartDate);
-                        Assert.AreEqual(expectedBanDuration, e2.BanEndDate - e2.BanStartDate);
-                        if (resetFailedLogin)
-                        {
-                            Assert.AreEqual(0, e1.FailedLoginCount);
-                            Assert.AreEqual(0, e2.FailedLoginCount);
-                        }
-                        else
-                        {
-                            Assert.AreNotEqual(0, e1.FailedLoginCount);
-                            Assert.AreNotEqual(0, e2.FailedLoginCount);
-                        }
+                        // now they should be banned, failed login counts are reset upon ban
+                        AssertIPAddressesAreBanned(0, 0);
                     }
                     else
                     {
-                        // the cycle will run and remove the expired ip first as they have finished the loop through the ban times, they should all have a single failed login count
-                        AddFailedLogins(1);
-                        AssertIPAddressesAreNotBanned(true, true);
-                        Assert.IsTrue(service.DB.TryGetIPAddress(ip1, out IPBanDB.IPAddressEntry e1));
-                        Assert.IsTrue(service.DB.TryGetIPAddress(ip2, out IPBanDB.IPAddressEntry e2));
-                        Assert.IsNull(e1.BanStartDate);
-                        Assert.IsNull(e2.BanStartDate);
-                        Assert.IsNull(e1.BanEndDate);
-                        Assert.IsNull(e2.BanEndDate);
-                        Assert.AreEqual(1, e1.FailedLoginCount);
-                        Assert.AreEqual(1, e2.FailedLoginCount);
+                        // should have gotten back in with just a single failed login
+                        AssertIPAddressesAreBanned(info1.Count + i, info2.Count + i);
+                    }
 
-                        // now add a bunch of fail logins, ip should ban with a time span of 1 minute
-                        AddFailedLogins();
-                        if (resetFailedLogin)
-                        {
-                            AssertIPAddressesAreBanned(0, 0);
-                        }
-                        else
-                        {
-                            AssertIPAddressesAreBanned(info1.Count + 1, info2.Count + 1);
-                        }
-                        Assert.IsTrue(service.DB.TryGetIPAddress(ip1, out e1));
-                        Assert.IsTrue(service.DB.TryGetIPAddress(ip2, out e2));
-                        TimeSpan expectedBanDuration = TimeSpan.FromMinutes(1.0);
-                        Assert.AreEqual(expectedBanDuration, e1.BanEndDate - e1.BanStartDate);
-                        Assert.AreEqual(expectedBanDuration, e2.BanEndDate - e2.BanStartDate);
-                        if (resetFailedLogin)
-                        {
-                            Assert.AreEqual(0, e1.FailedLoginCount);
-                            Assert.AreEqual(0, e2.FailedLoginCount);
-                        }
-                        else
-                        {
-                            Assert.AreEqual(info1.Count + 1, e1.FailedLoginCount);
-                            Assert.AreEqual(info2.Count + 1, e2.FailedLoginCount);
-                        }
+                    Assert.IsTrue(service.DB.TryGetIPAddress(ip1, out IPBanDB.IPAddressEntry e1));
+                    Assert.IsTrue(service.DB.TryGetIPAddress(ip2, out IPBanDB.IPAddressEntry e2));
+
+                    // i == 3 means wrap around from 3 minutes back to 1 minute
+                    TimeSpan expectedBanDuration = (i < 3 ? expectedBanDuration = TimeSpan.FromMinutes(i + 1) : TimeSpan.FromMinutes(1.0));
+                    Assert.AreEqual(expectedBanDuration, e1.BanEndDate - e1.BanStartDate);
+                    Assert.AreEqual(expectedBanDuration, e2.BanEndDate - e2.BanStartDate);
+                    if (resetFailedLogin)
+                    {
+                        Assert.AreEqual(0, e1.FailedLoginCount);
+                        Assert.AreEqual(0, e2.FailedLoginCount);
+                    }
+                    else
+                    {
+                        Assert.AreNotEqual(0, e1.FailedLoginCount);
+                        Assert.AreNotEqual(0, e2.FailedLoginCount);
+                    }
+                }
+                else
+                {
+                    // the cycle will run and remove the expired ip first as they have finished the loop through the ban times, they should all have a single failed login count
+                    AddFailedLogins(1);
+
+                    // ips should exist but not be banned
+                    AssertIPAddressesAreNotBanned(true, true);
+                    Assert.IsTrue(service.DB.TryGetIPAddress(ip1, out IPBanDB.IPAddressEntry e1));
+                    Assert.IsTrue(service.DB.TryGetIPAddress(ip2, out IPBanDB.IPAddressEntry e2));
+                    Assert.IsNull(e1.BanStartDate);
+                    Assert.IsNull(e2.BanStartDate);
+                    Assert.IsNull(e1.BanEndDate);
+                    Assert.IsNull(e2.BanEndDate);
+                    Assert.AreEqual(1, e1.FailedLoginCount);
+                    Assert.AreEqual(1, e2.FailedLoginCount);
+
+                    // now add a bunch of fail logins, ip should ban with a time span of 1 minute
+                    AddFailedLogins();
+                    if (resetFailedLogin)
+                    {
+                        AssertIPAddressesAreBanned(0, 0);
+                    }
+                    else
+                    {
+                        AssertIPAddressesAreBanned(info1.Count + 1, info2.Count + 1);
+                    }
+                    Assert.IsTrue(service.DB.TryGetIPAddress(ip1, out e1));
+                    Assert.IsTrue(service.DB.TryGetIPAddress(ip2, out e2));
+                    TimeSpan expectedBanDuration = TimeSpan.FromMinutes(1.0);
+                    Assert.AreEqual(expectedBanDuration, e1.BanEndDate - e1.BanStartDate);
+                    Assert.AreEqual(expectedBanDuration, e2.BanEndDate - e2.BanStartDate);
+                    if (resetFailedLogin)
+                    {
+                        Assert.AreEqual(0, e1.FailedLoginCount);
+                        Assert.AreEqual(0, e2.FailedLoginCount);
+                    }
+                    else
+                    {
+                        Assert.AreEqual(info1.Count + 1, e1.FailedLoginCount);
+                        Assert.AreEqual(info2.Count + 1, e2.FailedLoginCount);
                     }
                 }
             }
-            finally
+        }
+
+        private class ExternalBlocker : IIPBanDelegate
+        {
+            private readonly IIPBanService service;
+
+            public ExternalBlocker(IIPBanService service)
             {
-                // restore config
-                await service.WriteConfigAsync(config);
+                this.service = service;
+            }
+
+            public Task LoginAttemptFailed(string ipAddress, string source, string userName, string machineGuid, string osName, string osVersion, DateTime timestamp)
+            {
+                var events = new IPAddressLogEvent[] { new IPAddressLogEvent(ipAddress, userName, source, 1, IPAddressEventType.Blocked, IPBanService.UtcNow, true) };
+                service.AddIPAddressLogEvents(events);
+                return Task.CompletedTask;
+            }
+
+            public void Dispose()
+            {
+                
+            }
+        }
+
+        private async Task TestMultipleBanTimespansExternalBlockAsync(bool resetFailedLogin)
+        {
+            const string ipAddress = "99.99.99.99";
+            const string userName = "TEST";
+            const string source = "RDP";
+            const IPAddressEventType type = IPAddressEventType.FailedLogin;
+            KeyValuePair<DateTime?, DateTime?> banDates;
+            service.IPBanDelegate = new ExternalBlocker(service);
+
+            IPAddressLogEvent[] events = new IPAddressLogEvent[1];
+
+            using IPBanConfig.TempConfigChanger configChanger = new IPBanConfig.TempConfigChanger(service, xml =>
+            {
+                xml = IPBanConfig.ChangeConfigAppSetting(xml, "BanTime", "00:00:01:00,00:00:05:00,00:00:15:00,89:00:00:00");
+                xml = IPBanConfig.ChangeConfigAppSetting(xml, "ResetFailedLoginCountForUnbannedIPAddresses", resetFailedLogin.ToString());
+                return xml;
+            }, out string newConfig);
+            Assert.AreEqual(4, service.Config.BanTimes.Length);
+
+            // send a block event, should get banned for 1 minute
+            IPBanService.UtcNow = new DateTime(2020, 1, 1, 1, 1, 1, DateTimeKind.Utc);
+
+            for (int i = 0; i < 2; i++)
+            {
+                events[0] = new IPAddressLogEvent(ipAddress, userName, source, 1, type, IPBanService.UtcNow);
+                service.AddIPAddressLogEvents(events);
+                await service.RunCycleAsync();
+                Assert.IsFalse(service.Firewall.IsIPAddressBlocked(ipAddress));
+
+                // run cycle again, should get pinged by external blocker and ip should be blocked
+                await service.RunCycleAsync();
+                Assert.IsTrue(service.Firewall.IsIPAddressBlocked(ipAddress));
+                Assert.IsTrue(service.DB.TryGetBanDates(ipAddress, out banDates));
+                Assert.AreEqual(IPBanService.UtcNow, banDates.Key);
+                Assert.AreEqual(IPBanService.UtcNow.AddMinutes(1.0), banDates.Value);
+
+                // short step, should still be blocked
+                IPBanService.UtcNow += TimeSpan.FromSeconds(1.0);
+                await service.RunCycleAsync();
+                Assert.IsTrue(service.Firewall.IsIPAddressBlocked(ipAddress));
+
+                IPBanService.UtcNow += TimeSpan.FromMinutes(1.0);
+                await service.RunCycleAsync();
+                Assert.IsFalse(service.Firewall.IsIPAddressBlocked(ipAddress));
+
+                // send a fail login event, should get banned for 5 minutes
+                events[0] = new IPAddressLogEvent(ipAddress, userName, source, 1, type, IPBanService.UtcNow);
+                service.AddIPAddressLogEvents(events);
+                await service.RunCycleAsync();
+                Assert.IsFalse(service.Firewall.IsIPAddressBlocked(ipAddress));
+
+                DateTime savedBanDate = IPBanService.UtcNow;
+
+                // add a failed and blocked login event, should not interfere with the ban cycle
+                events[0] = new IPAddressLogEvent(ipAddress, userName, source, 1, IPAddressEventType.FailedLogin, IPBanService.UtcNow);
+                service.AddIPAddressLogEvents(events);
+                await service.RunCycleAsync();
+                events[0] = new IPAddressLogEvent(ipAddress, userName, source, 1, IPAddressEventType.Blocked, IPBanService.UtcNow, true);
+                service.AddIPAddressLogEvents(events);
+                await service.RunCycleAsync();
+
+                // throw in some chaos
+                IPBanService.UtcNow += TimeSpan.FromSeconds(7.213);
+
+                // blocker will ban the ip
+                await service.RunCycleAsync();
+
+                Assert.IsTrue(service.Firewall.IsIPAddressBlocked(ipAddress));
+                Assert.IsTrue(service.DB.TryGetBanDates(ipAddress, out banDates));
+                Assert.AreEqual(savedBanDate, banDates.Key);
+                Assert.AreEqual(savedBanDate.AddMinutes(5.0), banDates.Value);
+
+                IPBanService.UtcNow += TimeSpan.FromMinutes(20.0);
+                await service.RunCycleAsync();
+                Assert.IsFalse(service.Firewall.IsIPAddressBlocked(ipAddress));
+
+                // send a failed login event, should get banned for 15 minutes
+                events[0] = new IPAddressLogEvent(ipAddress, userName, source, 1, type, IPBanService.UtcNow);
+                service.AddIPAddressLogEvents(events);
+                await service.RunCycleAsync();
+                Assert.IsFalse(service.Firewall.IsIPAddressBlocked(ipAddress));
+
+                // cycle again, blocker will ban
+                await service.RunCycleAsync();
+                Assert.IsTrue(service.Firewall.IsIPAddressBlocked(ipAddress));
+                Assert.IsTrue(service.DB.TryGetBanDates(ipAddress, out banDates));
+                Assert.AreEqual(IPBanService.UtcNow, banDates.Key);
+                Assert.AreEqual(IPBanService.UtcNow.AddMinutes(15.0), banDates.Value);
+
+                IPBanService.UtcNow += TimeSpan.FromMinutes(30.0);
+                await service.RunCycleAsync();
+                Assert.IsFalse(service.Firewall.IsIPAddressBlocked(ipAddress));
+
+                // send a block event, should get banned for 89 days
+                events[0] = new IPAddressLogEvent(ipAddress, userName, source, 1, type, IPBanService.UtcNow);
+                service.AddIPAddressLogEvents(events);
+                await service.RunCycleAsync();
+                Assert.IsFalse(service.Firewall.IsIPAddressBlocked(ipAddress));
+
+                // cycle again, blocker will ban
+                await service.RunCycleAsync();
+                Assert.IsTrue(service.Firewall.IsIPAddressBlocked(ipAddress));
+                Assert.IsTrue(service.DB.TryGetBanDates(ipAddress, out banDates));
+                Assert.AreEqual(IPBanService.UtcNow, banDates.Key);
+                Assert.AreEqual(IPBanService.UtcNow.AddDays(89.0), banDates.Value);
+
+                IPBanService.UtcNow += TimeSpan.FromDays(91.0);
+                await service.RunCycleAsync();
+                Assert.IsFalse(service.Firewall.IsIPAddressBlocked(ipAddress));
             }
         }
 
@@ -479,23 +648,54 @@ namespace DigitalRuby.IPBanTests
         }
 
         [Test]
-        public async Task TestIPWhitelist()
+        public Task TestMultipleBanTimespansExternalBlock()
         {
-            await RunConfigBanTest("Whitelist", "192.168.0.0/16", "99.99.99.99", "192.168.99.99");
+            return TestMultipleBanTimespansExternalBlockAsync(true);
         }
 
         [Test]
-        public async Task TestIPWhitelistRegex()
+        public Task TestMultipleBanTimespansExternalBlockNoResetFailedLoginCount()
         {
-            await RunConfigBanTest("WhitelistRegex", "^10.0.([0-1]).([0-9]|[1-9][0-9]|1([0-9][0-9])|2([0-4][0-9]|5[0-5]))$", "192.168.99.99", "10.0.0.1");
-            await RunConfigBanTest("WhitelistRegex", "^(10.0.0.*)|(99.99.99.[0-9])$", "192.168.99.99", "10.0.0.1");
-            await RunConfigBanTest("WhitelistRegex", "^(10.0.0.*)|(99.99.99.[0-9])$", "192.168.99.99", "99.99.99.1");
+            return TestMultipleBanTimespansExternalBlockAsync(false);
+        }
+
+        [Test]
+        public void TestIPWhitelist()
+        {
+            RunConfigBanTest("Whitelist", "190.168.0.0", "99.99.99.99", "190.168.0.0", -1);
+            RunConfigBanTest("Whitelist", "190.168.0.0/16", "99.99.99.99", "190.168.99.99", -1);
+            RunConfigBanTest("Whitelist", "216.245.221.80/28", "99.99.99.99", "216.245.221.86", -1);
+        }
+
+        [Test]
+        public void TestIPWhitelistRegex()
+        {
+            RunConfigBanTest("WhitelistRegex", "^10.0.([0-1]).([0-9]|[1-9][0-9]|1([0-9][0-9])|2([0-4][0-9]|5[0-5]))$", "192.168.99.99", "10.0.0.1", -1);
+            RunConfigBanTest("WhitelistRegex", "^(10.0.0.*)|(99.99.99.[0-9])$", "192.168.99.99", "10.0.0.1", -1);
+            RunConfigBanTest("WhitelistRegex", "^(10.0.0.*)|(99.99.99.[0-9])$", "192.168.99.99", "99.99.99.1", -1);
+        }
+
+        [Test]
+        public void TestIPBlacklist()
+        {
+            RunConfigBanTest("Blacklist", "190.168.0.0", "190.168.0.0", "99.99.99.99", 1);
+            RunConfigBanTest("Blacklist", "190.168.0.0/16", "190.168.99.99", "99.99.99.98", 1);
+            RunConfigBanTest("Blacklist", "216.245.221.80/28", "216.245.221.86", "99.99.99.97", 1);
+        }
+
+        [Test]
+        public void TestIPBlacklistRegex()
+        {
+            RunConfigBanTest("BlacklistRegex", "^10.0.([0-1]).([0-9]|[1-9][0-9]|1([0-9][0-9])|2([0-4][0-9]|5[0-5]))$", "10.0.0.1", "192.168.99.100", 1);
+            RunConfigBanTest("BlacklistRegex", "^(10.0.0.*)|(99.99.99.[0-9])$", "10.0.0.1", "192.168.99.99", 1);
+            RunConfigBanTest("BlacklistRegex", "^(10.0.0.*)|(99.99.99.[0-9])$", "99.99.99.1", "192.168.99.98", 1);
+            RunConfigBanTest("BlacklistRegex", ".", "99.99.99.2", null);
         }
 
         [Test]
         public async Task TestFailedAndSuccessLoginFromSameIPAddress()
         {
-            await service.RunCycle();
+            await service.RunCycleAsync();
 
             string ip = "99.88.77.66";
 
@@ -512,43 +712,105 @@ namespace DigitalRuby.IPBanTests
                 });
             }
 
-            await service.RunCycle();
+            await service.RunCycleAsync();
 
             Assert.IsFalse(service.Firewall.IsIPAddressBlocked(ip, out _));
         }
 
-        private async Task RunConfigBanTest(string key, string value, string banIP, string noBanIP)
+        [Test]
+        public async Task TestFailedLoginsClearOnSuccessfulLogin()
         {
-            string config = await service.ReadConfigAsync();
-            string newConfig = IPBanConfig.ChangeConfigAppSetting(config, key, value);
-            await service.WriteConfigAsync(newConfig);
-
-            try
+            // turn on clear failed logins upon success login
+            using IPBanConfig.TempConfigChanger configChanger = new IPBanConfig.TempConfigChanger(service, xml =>
             {
-                // load new config
-                service.RunCycle().Sync();
+                return IPBanConfig.ChangeConfigAppSetting(xml, nameof(IPBanConfig.ClearFailedLoginsOnSuccessfulLogin), "true");
+            }, out string newConfig);
 
+            string ip = "99.88.77.66";
+            for (int i = 0; i < 2; i++)
+            {
                 service.AddIPAddressLogEvents(new IPAddressLogEvent[]
                 {
-                    // should be banned
-                    new IPAddressLogEvent(banIP, "user1", "RDP", 999, IPAddressEventType.FailedLogin),
-
-                    // whitelisted
-                    new IPAddressLogEvent(noBanIP, "user2", "RDP", 999, IPAddressEventType.FailedLogin),
+                    // fail login
+                    new IPAddressLogEvent(ip, "user1", "RDP", 1, IPAddressEventType.FailedLogin),
                 });
-
-                // process failed logins
-                service.RunCycle().Sync();
-
-                Assert.IsTrue(service.Firewall.IsIPAddressBlocked(banIP, out _));
-                Assert.IsFalse(service.Firewall.IsIPAddressBlocked(noBanIP, out _));
-                Assert.IsTrue(service.DB.TryGetIPAddress(banIP, out IPBanDB.IPAddressEntry e1));
-                Assert.IsFalse(service.DB.TryGetIPAddress(noBanIP, out IPBanDB.IPAddressEntry e2));
             }
-            finally
+
+            await service.RunCycleAsync();
+
+            service.AddIPAddressLogEvents(new IPAddressLogEvent[]
             {
-                // restore config
-                await service.WriteConfigAsync(config);
+                new IPAddressLogEvent(ip, "user1", "RDP", 1, IPAddressEventType.SuccessfulLogin),
+            });
+
+            await service.RunCycleAsync();
+
+            Assert.IsFalse(service.DB.TryGetIPAddress(ip, out _));
+        }
+
+        [Test]
+        public async Task TestFailedLoginsDoesNotClearOnSuccessfulLogin()
+        {
+            await service.RunCycleAsync();
+
+            string ip = "99.88.77.66";
+            for (int i = 0; i < 2; i++)
+            {
+                service.AddIPAddressLogEvents(new IPAddressLogEvent[]
+                {
+                    // fail login
+                    new IPAddressLogEvent(ip, "user1", "RDP", 1, IPAddressEventType.FailedLogin),
+                });
+            }
+
+            await service.RunCycleAsync();
+
+            service.AddIPAddressLogEvents(new IPAddressLogEvent[]
+            {
+                new IPAddressLogEvent(ip, "user1", "RDP", 1, IPAddressEventType.SuccessfulLogin),
+            });
+
+            await service.RunCycleAsync();
+
+            Assert.IsTrue(service.DB.TryGetIPAddress(ip, out _));
+        }
+
+        private void RunConfigBanTest(string key, string value, string banIP, string noBanIP, int noBanIPCount = 999)
+        {
+            // turn on clear failed logins upon success login
+            using IPBanConfig.TempConfigChanger configChanger = new IPBanConfig.TempConfigChanger(service, xml =>
+            {
+                return IPBanConfig.ChangeConfigAppSetting(xml, key, value);
+            }, out string newConfig);
+
+            List<IPAddressLogEvent> events = new List<IPAddressLogEvent>
+            {
+                new IPAddressLogEvent(banIP, "user1", "RDP", 999, IPAddressEventType.FailedLogin)
+            };
+            if (!string.IsNullOrWhiteSpace(noBanIP))
+            {
+                events.Add(new IPAddressLogEvent(noBanIP, "user2", "RDP", noBanIPCount, IPAddressEventType.FailedLogin));
+            }
+            service.AddIPAddressLogEvents(events);
+
+            // process failed logins
+            service.RunCycleAsync().Sync();
+
+            Assert.IsTrue(service.Firewall.IsIPAddressBlocked(banIP, out _));
+            Assert.IsTrue(service.DB.TryGetIPAddress(banIP, out IPBanDB.IPAddressEntry e1));
+            Assert.AreEqual(e1.FailedLoginCount, 999);
+            if (!string.IsNullOrWhiteSpace(noBanIP))
+            {
+                Assert.IsFalse(service.Firewall.IsIPAddressBlocked(noBanIP, out _));
+                if (noBanIPCount > 0)
+                {
+                    Assert.IsTrue(service.DB.TryGetIPAddress(noBanIP, out IPBanDB.IPAddressEntry e2));
+                    Assert.AreEqual(e2.FailedLoginCount, noBanIPCount);
+                }
+                else
+                {
+                    Assert.IsFalse(service.DB.TryGetIPAddress(noBanIP, out _));
+                }
             }
         }
     }

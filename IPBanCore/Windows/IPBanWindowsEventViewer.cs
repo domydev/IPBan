@@ -1,7 +1,7 @@
 ﻿/*
 MIT License
 
-Copyright (c) 2019 Digital Ruby, LLC - https://www.digitalruby.com
+Copyright (c) 2012-present Digital Ruby, LLC - https://www.digitalruby.com
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -66,7 +66,15 @@ namespace DigitalRuby.IPBanCore
         /// <returns>Task</returns>
         public Task Update(CancellationToken cancelToken)
         {
-            SetupEventLogWatcher();
+            try
+            {
+                SetupEventLogWatcher();
+            }
+            catch (Exception ex)
+            {
+                previousQueryString = null;
+                Logger.Warn("Failed to initialize windows event viewer, will retry initialization on next cycle: {0}", ex.Message);
+            }
             return Task.CompletedTask;
         }
 
@@ -155,6 +163,7 @@ namespace DigitalRuby.IPBanCore
             DateTime? timestamp = null;
             int count = 1;
             bool mismatch;
+            int failedLoginThreshold = 0;
 
             if (keywordsNode != null)
             {
@@ -238,6 +247,7 @@ namespace DigitalRuby.IPBanCore
                     {
                         // use default source if we didn't find a source override
                         source ??= group.Source;
+                        failedLoginThreshold = group.FailedLoginThreshold;
                         break;
                     }
                 }
@@ -247,7 +257,8 @@ namespace DigitalRuby.IPBanCore
             if (ipAddress != null)
             {
                 IPAddressEventType type = (foundNotifyOnly ? IPAddressEventType.SuccessfulLogin : IPAddressEventType.FailedLogin);
-                return new IPAddressLogEvent(ipAddress, userName, source, count, type, timestamp is null ? default : timestamp.Value);
+                return new IPAddressLogEvent(ipAddress, userName, source, count, type,
+                    timestamp is null ? default : timestamp.Value, false, failedLoginThreshold);
             }
 
             // no matches
@@ -297,7 +308,7 @@ namespace DigitalRuby.IPBanCore
 
         private string GetEventLogQueryString(List<string> ignored)
         {
-            if (service.Config is null)
+            if (service.Config is null || service.Config.WindowsEventViewerExpressionsToBlock is null)
             {
                 return null;
             }
@@ -325,29 +336,20 @@ namespace DigitalRuby.IPBanCore
 
         private void SetupEventLogWatcher()
         {
-            try
+            // note- this code will throw when Windows reboots, especially after patches
+            List<string> ignored = new List<string>();
+            string queryString = GetEventLogQueryString(ignored);
+            if (queryString != null && queryString != previousQueryString)
             {
-                List<string> ignored = new List<string>();
-                string queryString = GetEventLogQueryString(ignored);
-                if (queryString != null && queryString != previousQueryString)
-                {
-                    Logger.Warn("Event viewer query string: {0}", queryString);
-                    foreach (string path in ignored)
-                    {
-                        Logger.Warn("Ignoring event viewer path {0}", path);
-                    }
+                watcher?.Dispose();
+                query = new EventLogQuery(null, PathType.LogName, queryString);
+                watcher = new EventLogWatcher(query);
+                watcher.EventRecordWritten += EventRecordWritten;
+                watcher.Enabled = true;
+                previousQueryString = queryString;
 
-                    watcher?.Dispose();
-                    query = new EventLogQuery(null, PathType.LogName, queryString);
-                    watcher = new EventLogWatcher(query);
-                    watcher.EventRecordWritten += EventRecordWritten;
-                    watcher.Enabled = true;
-                    previousQueryString = queryString;
-                }
-            }
-            catch (Exception ex)
-            {
-                Logger.Error("Failed to create event viewer watcher", ex);
+                Logger.Warn("Initialized event viewer with query string: {0}", queryString);
+                Logger.Warn("Ignoring event viewer paths: {0}", string.Join(',', ignored));
             }
         }
     }

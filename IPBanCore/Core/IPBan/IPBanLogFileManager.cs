@@ -1,7 +1,7 @@
 ﻿/*
 MIT License
 
-Copyright (c) 2019 Digital Ruby, LLC - https://www.digitalruby.com
+Copyright (c) 2012-present Digital Ruby, LLC - https://www.digitalruby.com
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -88,16 +88,16 @@ namespace DigitalRuby.IPBanCore
             }
             foreach (IPBanLogFileToParse newFile in newConfig.LogFilesToParse)
             {
-                string[] pathsAndMasks = newFile.PathAndMask.Split('\n');
+                string[] pathsAndMasks = newFile.PathsAndMasks;
                 for (int i = 0; i < pathsAndMasks.Length; i++)
                 {
-                    string pathAndMask = pathsAndMasks[i].Trim();
-                    if (pathAndMask.Length != 0)
+                    string pathAndMask = pathsAndMasks[i];
+                    if (!string.IsNullOrWhiteSpace(pathAndMask))
                     {
                         // if we don't have this log file and the platform matches, add it
                         bool noMatchingLogFile = logFilesToParse.FirstOrDefault(f => f.PathAndMask == pathAndMask) is null;
                         bool platformMatches = !string.IsNullOrWhiteSpace(newFile.PlatformRegex) &&
-                            Regex.IsMatch(OSUtility.Instance.Description, newFile.PlatformRegex.ToString().Trim(), RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+                            Regex.IsMatch(OSUtility.Description, newFile.PlatformRegex.ToString().Trim(), RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
                         if (noMatchingLogFile && platformMatches)
                         {
                             // log files use a timer internally and do not need to be updated regularly
@@ -112,7 +112,8 @@ namespace DigitalRuby.IPBanCore
                                 RegexSuccess = newFile.SuccessfulLoginRegex,
                                 RegexFailureTimestampFormat = newFile.FailedLoginRegexTimestampFormat,
                                 RegexSuccessTimestampFormat = newFile.SuccessfulLoginRegexTimestampFormat,
-                                Source = newFile.Source
+                                Source = newFile.Source,
+                                FailedLoginThreshold = newFile.FailedLoginThreshold
                             };
                             IPBanLogFileScanner scanner = new IPBanLogFileScanner(options);
                             logFilesToParse.Add(scanner);
@@ -120,7 +121,7 @@ namespace DigitalRuby.IPBanCore
                         }
                         else
                         {
-                            Logger.Debug("Ignoring log file path {0}, regex: {1}, no matching file: {2}, platform match: {3}",
+                            Logger.Trace("Ignoring log file path {0}, regex: {1}, no matching file: {2}, platform match: {3}",
                                 pathAndMask, newFile.PlatformRegex, noMatchingLogFile, platformMatches);
                         }
                     }

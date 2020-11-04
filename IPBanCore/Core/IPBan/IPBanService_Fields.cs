@@ -1,7 +1,7 @@
 ﻿/*
 MIT License
 
-Copyright (c) 2019 Digital Ruby, LLC - https://www.digitalruby.com
+Copyright (c) 2012-present Digital Ruby, LLC - https://www.digitalruby.com
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -40,12 +40,8 @@ namespace DigitalRuby.IPBanCore
     {
         private static readonly char[] regexTrimChars = new char[]
         {
-            ',', ';', '|', '_', '-', '\'', '\"', '(', ')', '[', ']', '{', '}', ' ', '\r', '\n'
+            ',', ';', '|', '_', '-', '\'', '\"', '(', ')', '[', ']', '{', '}', ' ', '\t', '\r', '\n'
         };
-
-        private System.Timers.Timer cycleTimer;
-        private bool firewallNeedsBlockedIPAddressesUpdate;
-        private IPBanDB ipDB;
 
         // batch failed logins every cycle
         private readonly List<IPAddressLogEvent> pendingFailedLogins = new List<IPAddressLogEvent>();
@@ -54,9 +50,13 @@ namespace DigitalRuby.IPBanCore
         private readonly HashSet<IUpdater> updaters = new HashSet<IUpdater>();
         private readonly SemaphoreSlim stopEvent = new SemaphoreSlim(0, 1);
         private readonly Dictionary<string, AsyncQueue<Func<CancellationToken, Task>>> firewallQueue = new Dictionary<string, AsyncQueue<Func<CancellationToken, Task>>>();
-        private readonly CancellationTokenSource serviceCancelTokenSource = new CancellationTokenSource();
+        private readonly SemaphoreSlim cycleLock = new SemaphoreSlim(1, 1);
 
+        private System.Threading.Timer cycleTimer;
+        private bool firewallNeedsBlockedIPAddressesUpdate;
+        private IPBanDB ipDB;
         private bool whitelistChanged;
+        private bool updateBannedIPAddressesOnStartCalled;
 
         /// <summary>
         /// Whether start url has been gotten
@@ -67,11 +67,6 @@ namespace DigitalRuby.IPBanCore
         /// IPBan Assembly
         /// </summary>
         public static Assembly IPBanAssembly { get; } = typeof(IPBanService).Assembly;
-
-        /// <summary>
-        /// Config file name
-        /// </summary>
-        public const string ConfigFileName = "DigitalRuby.IPBan.dll.config";
 
         /// <summary>
         /// Config file path
@@ -98,6 +93,11 @@ namespace DigitalRuby.IPBanCore
         public IDnsLookup DnsLookup { get; set; } = DefaultDnsLookup.Instance;
 
         /// <summary>
+        /// The dns server list implementation - defaults to IPBanDnsServerList
+        /// </summary>
+        public IDnsServerList DnsList { get; set; } = new IPBanDnsServerList();
+
+        /// <summary>
         /// External ip address implementation - defaults to ExternalIPAddressLookupDefault.Instance
         /// </summary>
         public ILocalMachineExternalIPAddressLookup ExternalIPAddressLookup { get; set; } = LocalMachineExternalIPAddressLookupDefault.Instance;
@@ -106,6 +106,11 @@ namespace DigitalRuby.IPBanCore
         /// Extra handler for banned ip addresses (optional)
         /// </summary>
         public IBannedIPAddressHandler BannedIPAddressHandler { get; set; } = new DefaultBannedIPAddressHandler();
+
+        /// <summary>
+        /// Firewall creator
+        /// </summary>
+        public IFirewallCreator FirewallCreator { get; set; } = new DefaultFirewallCreator();
 
         /// <summary>
         /// Configuration
@@ -192,6 +197,11 @@ namespace DigitalRuby.IPBanCore
         /// </summary>
         public bool UseWindowsEventViewer { get; set; } = true;
 
+        /// <summary>
+        /// Cancel token
+        /// </summary>
+        public CancellationToken CancelToken { get; private set; }
+
         private static DateTime? utcNow;
         /// <summary>
         /// Allows changing the current date time to facilitate testing of behavior over elapsed times. Set to default(DateTime) to revert to DateTime.UtcNow.
@@ -218,11 +228,6 @@ namespace DigitalRuby.IPBanCore
         public SecureString Authorization { get; set; }
 
         /// <summary>
-        /// Whether to run the first cycle in the Start method or wait for the timer to elapse.
-        /// </summary>
-        public bool RunFirstCycleRightAway { get; set; } = true;
-
-        /// <summary>
         /// File name to write ip addresses to (one per line) to block the ip addresses in the file. Can comma separate each line and the second line will be a source of the ban.
         /// </summary>
         public string BlockIPAddressesFileName { get; } = Path.Combine(AppContext.BaseDirectory, "ban.txt");
@@ -231,5 +236,19 @@ namespace DigitalRuby.IPBanCore
         /// File name to write ip addresses to (one per line) to unblock the ip addresses in the file
         /// </summary>
         public string UnblockIPAddressesFileName { get; } = Path.Combine(AppContext.BaseDirectory, "unban.txt");
+
+        /// <summary>
+        /// Pending log events
+        /// </summary>
+        public IReadOnlyCollection<IPAddressLogEvent> PendingLogEvents
+        {
+            get
+            {
+                lock (pendingLogEvents)
+                {
+                    return pendingLogEvents.ToArray();
+                }
+            }
+        }
     }
 }

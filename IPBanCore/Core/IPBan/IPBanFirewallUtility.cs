@@ -1,7 +1,7 @@
 ﻿/*
 MIT License
 
-Copyright (c) 2019 Digital Ruby, LLC - https://www.digitalruby.com
+Copyright (c) 2012-present Digital Ruby, LLC - https://www.digitalruby.com
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -96,70 +96,54 @@ namespace DigitalRuby.IPBanCore
         /// <summary>
         /// Create a firewall
         /// </summary>
-        /// <param name="osAndFirewall">Dictionary of string operating system name (Windows, Linux, OSX) and firewall class</param>
         /// <param name="rulePrefix">Rule prefix or null for default</param>
         /// <returns>Firewall</returns>
-        public static IIPBanFirewall CreateFirewall(IReadOnlyDictionary<string, string> osAndFirewall, string rulePrefix = null, IIPBanFirewall existing = null)
+        public static IIPBanFirewall CreateFirewall(string rulePrefix = null, IIPBanFirewall existing = null)
         {
             try
             {
-                bool foundFirewallType = false;
                 int priority = int.MinValue;
                 Type firewallType = typeof(IIPBanFirewall);
-                List<Type> allTypes = ExtensionMethods.GetAllTypes();
+                IReadOnlyCollection<Type> allTypes = ExtensionMethods.GetAllTypes();
+
                 var q =
                     from fwType in allTypes
                     where fwType.IsPublic &&
                         fwType != firewallType &&
                         firewallType.IsAssignableFrom(fwType) &&
                         fwType.GetCustomAttribute<RequiredOperatingSystemAttribute>() != null &&
-                        fwType.GetCustomAttribute<RequiredOperatingSystemAttribute>().IsValid
+                        fwType.GetCustomAttribute<RequiredOperatingSystemAttribute>().IsMatch
                     select new { FirewallType = fwType, OS = fwType.GetCustomAttribute<RequiredOperatingSystemAttribute>(), Name = fwType.GetCustomAttribute<CustomNameAttribute>() };
-                var array = q.ToArray();
+                var array = q.OrderBy(f => f.OS.Priority).ToArray();
                 foreach (var result in array)
                 {
                     // look up the requested firewall by os name
                     bool matchPriority = priority < result.OS.Priority;
                     if (matchPriority)
                     {
-                        bool matchName = true;
-                        if (osAndFirewall != null && osAndFirewall.Count != 0 &&
-                            (osAndFirewall.TryGetValue(OSUtility.Instance.Name, out string firewallToUse) || osAndFirewall.TryGetValue("*", out firewallToUse)))
+                        // if IsAvailable method is provided, attempt to call
+                        MethodInfo available = result.FirewallType.GetMethod("IsAvailable", BindingFlags.Public | BindingFlags.Static | BindingFlags.FlattenHierarchy);
+                        if (available != null)
                         {
-                            matchName = result.Name.Name.Equals(firewallToUse, StringComparison.OrdinalIgnoreCase);
-                        }
-                        if (matchName)
-                        {
-                            // if IsAvailable method is provided, attempt to call
-                            MethodInfo available = result.FirewallType.GetMethod("IsAvailable", BindingFlags.Public | BindingFlags.Static | BindingFlags.FlattenHierarchy);
-                            if (available != null)
+                            try
                             {
-                                try
-                                {
-                                    if (!Convert.ToBoolean(available.Invoke(null, null)))
-                                    {
-                                        continue;
-                                    }
-                                }
-                                catch
+                                if (!Convert.ToBoolean(available.Invoke(null, null)))
                                 {
                                     continue;
                                 }
                             }
-                            firewallType = result.FirewallType;
-                            priority = result.OS.Priority;
-                            foundFirewallType = true;
+                            catch
+                            {
+                                continue;
+                            }
                         }
+                        firewallType = result.FirewallType;
+                        priority = result.OS.Priority;
                     }
                 }
-                if (firewallType is null)
+                if (firewallType is null || firewallType == typeof(IIPBanFirewall))
                 {
                     throw new ArgumentException("Firewall is null, at least one type should implement IIPBanFirewall");
-                }
-                else if (osAndFirewall.Count != 0 && !foundFirewallType)
-                {
-                    string typeString = string.Join(',', osAndFirewall.Select(kv => kv.Key + ":" + kv.Value));
-                    throw new ArgumentException("Unable to find firewalls of types: " + typeString + ", osname: " + OSUtility.Instance.Name);
                 }
                 if (existing != null && existing.GetType().Equals(firewallType))
                 {
@@ -261,65 +245,74 @@ namespace DigitalRuby.IPBanCore
         }
 
         /// <summary>
-        /// Get a port range of block ports except the passed in port ranges
+        /// Get a collection of block port ranges from a set of allow port ranges. Overlap ranges are not allowed.
         /// </summary>
-        /// <param name="portRanges">Port ranges to allow, all other ports are blocked</param>
-        /// <returns>Port range string to block (i.e. 0-79,81-442,444-65535)</returns>
-        public static string GetPortRangeStringBlockExcept(IEnumerable<PortRange> portRanges)
+        /// <param name="allowPortRanges">Allow port ranges</param>
+        /// <returns>Set of block port ranges</returns>
+        public static IReadOnlyCollection<PortRange> GetBlockPortRanges(IEnumerable<PortRange> allowPortRanges)
         {
-            if (portRanges is null)
+            if (allowPortRanges is null)
             {
                 return null;
             }
-            StringBuilder b = new StringBuilder();
+            List<PortRange> blockPortRanges = new List<PortRange>();
             int currentPort = 0;
-            foreach (PortRange range in portRanges.Where(r => r.IsValid).OrderBy(r => r.MinPort))
+            foreach (PortRange range in allowPortRanges.Where(r => r.IsValid).OrderBy(r => r.MinPort).ThenBy(r => r.MaxPort))
             {
                 // if current port less than min, append range
                 if (currentPort < range.MinPort)
                 {
                     int maxPort = range.MinPort - 1;
-                    AppendRange(b, new PortRange(currentPort, maxPort));
+                    blockPortRanges.Add(new PortRange(currentPort, maxPort));
                     currentPort = range.MaxPort + 1;
                 }
-                // if current port in range, append the overlapped range
-                else if (currentPort >= range.MinPort && currentPort <= range.MaxPort)
-                {
-                    AppendRange(b, new PortRange(range.MinPort, currentPort));
-                    currentPort++;
-                }
-                // append the after range to current port
-                else if (currentPort <= range.MaxPort)
-                {
-                    AppendRange(b, new PortRange(range.MaxPort + 1, currentPort));
-                    currentPort++;
-                }
             }
-            if (currentPort != 0)
+            if (currentPort != 0 && currentPort <= 65535)
             {
-                AppendRange(b, new PortRange(currentPort, 65535));
+                blockPortRanges.Add(new PortRange(currentPort, 65535));
+            }
+
+            return blockPortRanges;
+        }
+
+        /// <summary>
+        /// Get a port range of block ports given a set of allowed port ranges
+        /// </summary>
+        /// <param name="allowPortRanges">Port ranges to allow, all other ports are blocked</param>
+        /// <returns>Port range string to block (i.e. 0-79,81-442,444-65535) - null if none to block.</returns>
+        public static string GetBlockPortRangeString(IEnumerable<PortRange> allowPortRanges)
+        {
+            if (allowPortRanges is null)
+            {
+                return null;
+            }
+            IReadOnlyCollection<PortRange> blockPortRanges = GetBlockPortRanges(allowPortRanges);
+            StringBuilder portRangeStringBuilder = new StringBuilder();
+            foreach (PortRange portRange in blockPortRanges)
+            {
+                AppendRange(portRangeStringBuilder, portRange);
             }
 
             // trim ending comma
-            if (b.Length != 0)
+            if (portRangeStringBuilder.Length != 0)
             {
-                b.Length--;
+                portRangeStringBuilder.Length--;
             }
-            return (b.Length == 0 ? null : b.ToString());
+            return (portRangeStringBuilder.Length == 0 ? null : portRangeStringBuilder.ToString());
         }
 
         /// <summary>
         /// Get a port range of allow ports. Overlaps are thrown out.
         /// </summary>
-        /// <param name="portRanges">Port ranges to allow</param>
+        /// <param name="allowPortRanges">Port ranges to allow</param>
         /// <returns>Port range string to allow (i.e. 80,443,1000-10010)</returns>
-        public static string GetPortRangeStringAllow(IEnumerable<PortRange> portRanges)
+        public static string GetPortRangeStringAllow(IEnumerable<PortRange> allowPortRanges)
         {
             StringBuilder b = new StringBuilder();
-            if (portRanges != null)
+            if (allowPortRanges != null)
             {
                 int lastMax = -1;
-                foreach (PortRange range in portRanges.OrderBy(p => p.MinPort))
+                foreach (PortRange range in allowPortRanges.OrderBy(p => p.MinPort))
                 {
                     if (range.MinPort > lastMax)
                     {

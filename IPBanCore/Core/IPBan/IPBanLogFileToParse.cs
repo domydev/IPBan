@@ -1,7 +1,7 @@
 ﻿/*
 MIT License
 
-Copyright (c) 2019 Digital Ruby, LLC - https://www.digitalruby.com
+Copyright (c) 2012-present Digital Ruby, LLC - https://www.digitalruby.com
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -112,6 +112,15 @@ namespace DigitalRuby.IPBanCore
         public int MaxFileSize { get; set; }
 
         /// <summary>
+        /// Override failed login threshold or 0 for default
+        /// </summary>
+        [DisplayFormat(ConvertEmptyStringToNull = false)]
+        [Required(AllowEmptyStrings = true)]
+        [LocalizedDisplayName(nameof(IPBanResources.FailedLoginThreshold))]
+        [JsonProperty(NullValueHandling = NullValueHandling.Ignore)]
+        public int FailedLoginThreshold { get; set; }
+
+        /// <summary>
         /// ToString
         /// </summary>
         /// <returns>String</returns>
@@ -121,7 +130,7 @@ namespace DigitalRuby.IPBanCore
         }
 
         /// <summary>
-        /// Get an array of each individual path/mask
+        /// Get an array of each individual path/mask, converted to normalized glob syntax
         /// </summary>
         public string[] PathsAndMasks
         {
@@ -132,7 +141,7 @@ namespace DigitalRuby.IPBanCore
                 {
                     if (!string.IsNullOrWhiteSpace(s))
                     {
-                        list.Add(s.Trim());
+                        list.Add(LogFileScanner.NormalizeGlob(s, out _, out _));
                     }
                 }
                 return list.ToArray();

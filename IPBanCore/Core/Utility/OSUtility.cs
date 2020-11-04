@@ -1,7 +1,7 @@
 ﻿/*
 MIT License
 
-Copyright (c) 2019 Digital Ruby, LLC - https://www.digitalruby.com
+Copyright (c) 2012-present Digital Ruby, LLC - https://www.digitalruby.com
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -23,6 +23,7 @@ SOFTWARE.
 */
 
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
@@ -62,52 +63,66 @@ namespace DigitalRuby.IPBanCore
         /// </summary>
         public const string Mac = "Mac";
 
-        private static readonly Lazy<OSUtility> instance = new Lazy<OSUtility>(() =>
-        {
-            OSUtility os = new OSUtility();
-            os.Initialize();
-            return os;
-        });
-
-        /// <summary>
-        /// Singleton. Setting static variables in a static constructor especially with threads has proven
-        /// problematic, so making this a singleton object instead.
-        /// </summary>
-        public static OSUtility Instance { get { return instance.Value; } }
-
         /// <summary>
         /// Operating system name (i.e. Windows, Linux or OSX)
         /// </summary>
-        public string Name { get; private set; }
+        public static string Name { get; private set; }
 
         /// <summary>
         /// Operating system cpu architecture (i.e. x86 or x64)
         /// </summary>
-        public string CpuArchitecture { get; private set; }
+        public static string CpuArchitecture { get; private set; }
 
         /// <summary>
         /// Operating system version
         /// </summary>
-        public string Version { get; private set; }
+        public static string Version { get; private set; }
 
         /// <summary>
         /// Operating system friendly/code name
         /// </summary>
-        public string FriendlyName { get; private set; }
+        public static string FriendlyName { get; private set; }
 
         /// <summary>
         /// Operating system description
         /// </summary>
-        public string Description { get; private set; }
+        public static string Description { get; private set; }
 
-        private bool isWindows;
-        private bool isLinux;
-        private bool isMac;
+        private static readonly string tempFolder;
 
-        private string processVerb;
-        private string tempFolder;
+        private static bool isWindows;
+        private static bool isLinux;
+        private static bool isMac;
 
-        private string ExtractRegex(string input, string regex, string defaultValue)
+        private static string processVerb;
+
+        static OSUtility()
+        {
+            try
+            {
+                tempFolder = Path.GetTempPath();
+                if (string.IsNullOrWhiteSpace(tempFolder))
+                {
+                    if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+                    {
+                        tempFolder = "c://temp";
+                        processVerb = "runas";
+                    }
+                    else
+                    {
+                        tempFolder = "/tmp";
+                    }
+                }
+                Directory.CreateDirectory(tempFolder);
+                LoadOSInfo();
+            }
+            catch (Exception ex)
+            {
+                Logger.Error("Error in OSUtility static constructor", ex);
+            }
+        }
+
+        private static string ExtractRegex(string input, string regex, string defaultValue)
         {
             Match m = Regex.Match(input, regex, RegexOptions.IgnoreCase | RegexOptions.Multiline);
             if (m.Success)
@@ -117,121 +132,9 @@ namespace DigitalRuby.IPBanCore
             return defaultValue;
         }
 
-        private void LoadVersionFromWmiApi()
+        private static void LoadOSInfo()
         {
-            Logger.Info("Attempting to retrieve os version from WMI api...");
-
-            // use local vars, attempting to set property in a static constructor in a thread hangs the process
-            string friendlyName = null;
-            string version = null;
-
-            // in case this hangs after os reboot, put a 5 second timeout on the call
-            Thread thread = new Thread(new ThreadStart(() =>
-            {
-                try
-                {
-                    // WMI API sometimes fails to initialize on .NET core on some systems, not sure why...
-                    // fall-back to WMI, maybe future .NET core versions will fix the bug
-                    using ManagementObjectSearcher searcher = new ManagementObjectSearcher("SELECT Caption, Version FROM Win32_OperatingSystem");
-                    foreach (var result in searcher.Get())
-                    {
-                        friendlyName = result["Caption"] as string;
-                        version = result["Version"] as string;
-                        break;
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Logger.Error(ex, "Error loading os info from WMI API");
-                }
-            }));
-            thread.SetApartmentState(ApartmentState.STA);
-            thread.Start();
-            if (!thread.Join(5000))
-            {
-                throw new ApplicationException("Timed out loading os info from WMI API");
-            }
-            if (friendlyName is null || version is null)
-            {
-                throw new IOException("WMI did not return the name and version");
-            }
-            FriendlyName = friendlyName;
-            Version = version;
-        }
-
-        private void LoadVersionFromWmic()
-        {
-            string tempFile = GetTempFileName();
-            
-            // .net core WMI has a strange bug where WMI will not initialize on some systems
-            // since this is the only place where WMI is used, we can just work-around it
-            // with the wmic executable, which exists (as of 2018) on all supported Windows.
-            // this process can hang and fail to run after windows update or other cases on system restart,
-            // so put a short timeout in and fallback to WMI api if needed
-            Exception lastError = null;
-
-            Logger.Info("Attempting to load os info from wmic");
-
-            // attempt to run wmic to generate the info we want
-            StartProcessAndWait(5000, "cmd", "/C wmic path Win32_OperatingSystem get Caption,Version /format:table > \"" + tempFile + "\"");
-
-            // try up to 10 times to read the file in case file is still in use
-            try
-            {
-                for (int i = 0; i < 10; i++)
-                {
-                    try
-                    {
-                        // if this throws, we will try again
-                        string[] lines = File.ReadAllLines(tempFile);
-
-                        // if we have enough lines, try to parse them out
-                        if (lines.Length > 1)
-                        {
-                            int versionIndex = lines[0].IndexOf("Version");
-                            if (versionIndex >= 0)
-                            {
-                                FriendlyName = lines[1].Substring(0, versionIndex - 1).Trim();
-                                Version = lines[1].Substring(versionIndex).Trim();
-                                return;
-                            }
-                        }
-
-                        throw new InvalidDataException("Invalid file generated by wmic");
-                    }
-                    catch (Exception ex)
-                    {
-                        lastError = ex;
-                        if (ex is InvalidDataException)
-                        {
-                            break;
-                        }
-                    }
-                    Thread.Sleep(200);
-                }
-            }
-            finally
-            {
-                ExtensionMethods.FileDeleteWithRetry(tempFile);
-            }
-            throw new ApplicationException("Unable to load os version using wmic", lastError);
-        }
-
-        private void LoadOSInfo()
-        {
-            tempFolder = Path.GetTempPath();
-            if (string.IsNullOrWhiteSpace(tempFolder))
-            {
-                if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-                {
-                    tempFolder = "c:\\temp";
-                }
-                else
-                {
-                    tempFolder = "/tmp";
-                }
-            }
-            Directory.CreateDirectory(tempFolder);
+            Logger.Warn("Detecting os version...");
 
             // start off with built in version info, this is not as detailed or nice as we like,
             //  so we try some other ways to get more detailed information
@@ -242,47 +145,11 @@ namespace DigitalRuby.IPBanCore
             // attempt to get detailed version info
             if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
             {
-                Name = FriendlyName = OSUtility.Linux;
-                isLinux = true;
-                string tempFile = GetTempFileName();
-                Process.Start("/bin/bash", "-c \"cat /etc/*release* > " + tempFile + "\"").WaitForExit();
-                System.Threading.Tasks.Task.Delay(100); // wait a small bit for file to really be closed
-                string versionText = File.ReadAllText(tempFile).Trim();
-                ExtensionMethods.FileDeleteWithRetry(tempFile);
-                if (string.IsNullOrWhiteSpace(versionText))
-                {
-                    Logger.Error(new IOException("Unable to load os version from /etc/*release* ..."));
-                }
-                else
-                {
-                    FriendlyName = ExtractRegex(versionText, "^(Id|Distrib_Id)=(?<value>.*?)$", string.Empty);
-                    if (FriendlyName.Length != 0)
-                    {
-                        string codeName = ExtractRegex(versionText, "^(Name|Distrib_CodeName)=(?<value>.+)$", string.Empty);
-                        if (codeName.Length != 0)
-                        {
-                            FriendlyName += " - " + codeName;
-                        }
-                        Version = ExtractRegex(versionText, "^Version_Id=(?<value>.+)$", Version);
-                    }
-                }
+                LoadVersionFromLinux();
             }
             else if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
             {
-                Name = FriendlyName = OSUtility.Windows;
-                isWindows = true;
-                processVerb = "runas";
-                try
-                {
-                    LoadVersionFromWmic();
-                }
-                catch (Exception ex)
-                {
-                    Logger.Error(ex, "Failed to load os info from wmic");
-
-                    // last resort, try wmi api
-                    LoadVersionFromWmiApi();
-                }
+                LoadVersionFromWindows();
             }
             else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
             {
@@ -296,50 +163,97 @@ namespace DigitalRuby.IPBanCore
                 Name = OSUtility.Unknown;
                 FriendlyName = "Unknown";
             }
+
+            Logger.Warn("OS version detected: {0}", OSString());
         }
 
-        private int osInfoRetryCount;
-
-        private void LoadOSInfoWithRetryLoop()
+        private static void LoadVersionFromLinux()
         {
-            try
+            Name = FriendlyName = OSUtility.Linux;
+            isLinux = true;
+            string tempFile = GetTempFileName();
+            Process.Start("/bin/bash", "-c \"cat /etc/*release* > " + tempFile + "\"").WaitForExit();
+            System.Threading.Tasks.Task.Delay(100); // wait a small bit for file to really be closed
+            string versionText = File.ReadAllText(tempFile).Trim();
+            ExtensionMethods.FileDeleteWithRetry(tempFile);
+            if (string.IsNullOrWhiteSpace(versionText))
             {
-                LoadOSInfo();
+                Logger.Error(new IOException("Unable to load os version from /etc/*release* ..."));
             }
-            catch (Exception ex)
+            else
             {
-                Logger.Error(ex, "Error loading os info");
-
-                // try up to 100 times to load the os info
-                if (++osInfoRetryCount < 100)
+                FriendlyName = ExtractRegex(versionText, "^(Id|Distrib_Id)=(?<value>.*?)$", string.Empty);
+                if (FriendlyName.Length != 0)
                 {
-                    ThreadPool.QueueUserWorkItem(state =>
+                    string codeName = ExtractRegex(versionText, "^(Name|Distrib_CodeName)=(?<value>.+)$", string.Empty);
+                    if (codeName.Length != 0)
                     {
-                        Thread.Sleep(10000);
-                        LoadOSInfoWithRetryLoop();
-                    });
+                        FriendlyName += " - " + codeName;
+                    }
+                    Version = ExtractRegex(versionText, "^Version_Id=(?<value>.+)$", Version);
                 }
             }
         }
 
-        /// <summary>
-        /// Constructor
-        /// </summary>
-        private OSUtility()
+        private static void LoadVersionFromWindows()
         {
+            Name = FriendlyName = OSUtility.Windows;
+            isWindows = true;
+            string friendlyName = HKLM_GetString(@"SOFTWARE\Microsoft\Windows NT\CurrentVersion", "ProductName");
+            if (!string.IsNullOrWhiteSpace(friendlyName))
+            {
+                int pos = friendlyName.IndexOf(' ');
+                if (pos > 0)
+                {
+                    string firstWord = friendlyName.Substring(0, pos);
+
+                    // as long as there are no extended chars, prepend Microsoft prefix
+                    // some os will prepend Microsoft in another language
+                    if (firstWord.Any(c => c > 126))
+                    {
+                        FriendlyName = friendlyName;
+                    }
+                    else
+                    {
+                        FriendlyName = "Microsoft " + friendlyName;
+                    }
+                }
+            }
+
+            // Windows loves to add a trailing .0 for some reason
+            Version = Regex.Replace(Version, "\\.0$", string.Empty);
         }
 
-        private void Initialize()
+        private static string HKLM_GetString(string path, string key)
         {
-            // perform initialize after constructor to avoid weird clr issues and freezing
-            LoadOSInfoWithRetryLoop();
+            try
+            {
+                using Microsoft.Win32.RegistryKey rk = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(path);
+                if (rk == null) return "";
+                return (string)rk.GetValue(key);
+            }
+            catch { return ""; }
         }
+
+        /* WMI can hang/crash the process, especially after Windows updates, don't use for now
+        private static string GetFriendlyNameFromWmi()
+        {
+            string result = string.Empty;
+            ManagementObjectSearcher searcher = new ManagementObjectSearcher("SELECT Caption FROM Win32_OperatingSystem");
+            foreach (ManagementObject os in searcher.Get())
+            {
+                result = os["Caption"].ToString();
+                break;
+            }
+            return result;
+        }
+        */
 
         /// <summary>
         /// Get a string representing the operating system
         /// </summary>
         /// <returns>String</returns>
-        public string OSString()
+        public static string OSString()
         {
             return $"Name: {Name}, Version: {Version}, Friendly Name: {FriendlyName}, Description: {Description}";
         }
@@ -352,7 +266,7 @@ namespace DigitalRuby.IPBanCore
         /// <param name="allowedExitCodes">Allowed exit codes, if null or empty it is not checked, otherwise a mismatch will throw an exception.</param>
         /// <returns>Output</returns>
         /// <exception cref="ApplicationException">Exit code did not match allowed exit codes</exception>
-        public string StartProcessAndWait(string program, string args, params int[] allowedExitCodes)
+        public static string StartProcessAndWait(string program, string args, params int[] allowedExitCodes)
         {
             return StartProcessAndWait(60000, program, args, allowedExitCodes);
         }
@@ -366,10 +280,10 @@ namespace DigitalRuby.IPBanCore
         /// <param name="allowedExitCodes">Allowed exit codes, if null or empty it is not checked, otherwise a mismatch will throw an exception.</param>
         /// <returns>Output</returns>
         /// <exception cref="ApplicationException">Exit code did not match allowed exit codes</exception>
-        public string StartProcessAndWait(int timeoutMilliseconds, string program, string args, params int[] allowedExitCodes)
+        public static string StartProcessAndWait(int timeoutMilliseconds, string program, string args, params int[] allowedExitCodes)
         {
             StringBuilder output = new StringBuilder();
-            Task task = Task.Run(() =>
+            Thread thread = new Thread(new ParameterizedThreadStart((_state) =>
             {
                 Logger.Info($"Executing process {program} {args}...");
 
@@ -423,14 +337,11 @@ namespace DigitalRuby.IPBanCore
                 {
                     throw new ApplicationException($"Program {program} {args}: failed with exit code {process.ExitCode}, output: {output}");
                 }
-            });
+            }));
+            thread.Start();
             int timeout = (timeoutMilliseconds < 1 ? Timeout.Infinite : timeoutMilliseconds + 5000);
-            if (!task.Wait(timeout))
+            if (!thread.Join(timeout))
             {
-                if (task.IsFaulted && task.Exception != null)
-                {
-                    throw task.Exception;
-                }
                 throw new ApplicationException("Timed out waiting for process result");
             }
             return output.ToString();
@@ -441,7 +352,7 @@ namespace DigitalRuby.IPBanCore
         /// </summary>
         /// <param name="userName">User name to check</param>
         /// <returns>True if user name is active, false otherwise</returns>
-        public bool UserIsActive(string userName)
+        public static bool UserIsActive(string userName)
         {
             if (string.IsNullOrWhiteSpace(userName))
             {
@@ -532,25 +443,9 @@ namespace DigitalRuby.IPBanCore
         /// <summary>
         /// Generate a new temporary file using TempFolder
         /// </summary>
-        public string GetTempFileName()
+        public static string GetTempFileName()
         {
             return Path.Combine(tempFolder, Guid.NewGuid().ToString("N") + ".tmp");
-        }
-
-        /// <summary>
-        /// Check if this process is running on Windows in an in process instance in IIS
-        /// </summary>
-        /// <returns>True if Windows and in an in process instance on IIS, false otherwise</returns>
-        public static bool IsRunningInProcessIIS()
-        {
-            if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-            {
-                return false;
-            }
-
-            string processName = Path.GetFileNameWithoutExtension(Process.GetCurrentProcess().ProcessName);
-            return (processName.Contains("w3wp", StringComparison.OrdinalIgnoreCase) ||
-                processName.Contains("iisexpress", StringComparison.OrdinalIgnoreCase));
         }
 
         /// <summary>
@@ -573,24 +468,40 @@ namespace DigitalRuby.IPBanCore
         }
 
         /// <summary>
-        /// Get the current temp foldre path
+        /// Get the current temp folder
         /// </summary>
-        public string TempFolder { get { return tempFolder; } }
+        public static string TempFolder { get { return tempFolder; } }
 
         /// <summary>
         /// Are we on Windows?
         /// </summary>
-        public bool IsWindows => isWindows;
+        public static bool IsWindows => isWindows;
 
         /// <summary>
         /// Are we on Linux?
         /// </summary>
-        public bool IsLinux => isLinux;
+        public static bool IsLinux => isLinux;
 
         /// <summary>
         /// Are we on Mac?
         /// </summary>
-        public bool IsMac => isMac;
+        public static bool IsMac => isMac;
+
+        /// <summary>
+        /// Determine if system is Windows 7 or Windows Server 2008 - these systems tend to have a lot of hacks
+        /// and work-arounds that are needed, especially for windows filtering platform
+        /// </summary>
+        public static bool IsWindows7OrServer2008
+        {
+            get
+            {
+                // Windows 7 and Server 2008 have major version of 6 and minor version of 0 or 1
+                var version = System.Environment.OSVersion;
+                return (version.Platform == PlatformID.Win32NT &&
+                    version.Version.Major == 6 &&
+                    version.Version.Minor < 2);
+            }
+        }
     }
 
     /// <summary>
@@ -602,20 +513,10 @@ namespace DigitalRuby.IPBanCore
         /// <summary>
         /// Constructor
         /// </summary>
-        /// <param name="os">OS (IPBanOS.*)</param>
-        /// <param name="priority">Priority</param>
-        public RequiredOperatingSystemAttribute(string os, int priority = 1)
+        /// <param name="os">OS (IPBanOS.*) or null/empty if none</param>
+        public RequiredOperatingSystemAttribute(string os)
         {
-            RequiredOS = os;
-            Priority = priority;
-        }
-
-        /// <summary>
-        /// Whether the current OS is valid for this attribute
-        /// </summary>
-        public bool IsValid
-        {
-            get { return RequiredOS is null || RequiredOS.Equals(OSUtility.Instance.Name, StringComparison.OrdinalIgnoreCase); }
+            RequiredOS = os?.Trim();
         }
 
         /// <summary>
@@ -624,9 +525,74 @@ namespace DigitalRuby.IPBanCore
         public string RequiredOS { get; }
 
         /// <summary>
-        /// Priority, higher priority override lower priority for the same OS
+        /// Priority - higher priority are preferred when registering firewalls.
+        /// Set to less than 0 to not include in regular firewall injection.
         /// </summary>
-        public int Priority { get; }
+        public int Priority { get; set; } = 1;
+
+        /// <summary>
+        /// Major version minimum. Set to 0 or less to ignore.
+        /// </summary>
+        public int MajorVersionMinimum { get; set; }
+
+        /// <summary>
+        /// Minor version minimum. Set to 0 or less to ignore.
+        /// </summary>
+        public int MinorVersionMinimum { get; set; }
+
+        /// <summary>
+        /// Require an environment variable to exist (key=value syntax)
+        /// </summary>
+        public string RequireEnvironmentVariable { get; set; }
+
+        /// <summary>
+        /// Whether the current OS is a match for this attribute
+        /// </summary>
+        public bool IsMatch
+        {
+            get
+            {
+                OperatingSystem os = Environment.OSVersion;
+
+                // if priority less than 0, do not match
+                bool matchPriority = Priority >= 0;
+
+                // if no os specified, do not match
+                bool matchRequiredOS = !string.IsNullOrWhiteSpace(RequiredOS) &&
+                    RequiredOS.Equals(OSUtility.Name, StringComparison.OrdinalIgnoreCase);
+
+                // major version matches if param is 0 or we are less than or equal to os major version with the param
+                bool matchMajorVersion = (MajorVersionMinimum <= 0 || MajorVersionMinimum <= os.Version.Major);
+
+                // minor version matches if major version param is 0 or minor version param is 0 or major version param
+                //  is less than os major version or the minor version param is less than or equal to the os minor version
+                bool matchMinorVersion = (MajorVersionMinimum <= 0 || MinorVersionMinimum <= 0 || MajorVersionMinimum < os.Version.Major ||
+                        MinorVersionMinimum <= os.Version.Minor);
+
+                bool matchEnvVar = true;
+                if (RequireEnvironmentVariable != null)
+                {
+                    string[] pieces = RequireEnvironmentVariable.Split('=');
+                    if (pieces.Length == 2)
+                    {
+                        string value = Environment.GetEnvironmentVariable(pieces[0]);
+                        if (value is null)
+                        {
+                            matchEnvVar = false;
+                        }
+                        else if (pieces[1].Length != 0)
+                        {
+                            matchEnvVar = pieces[1].Equals(value, StringComparison.OrdinalIgnoreCase);
+                        }
+                    }
+                }
+
+                // valid is AND of all of the above
+                bool valid = matchPriority && matchRequiredOS && matchMajorVersion && matchMinorVersion && matchEnvVar;
+
+                return valid;
+            }
+        }
     }
 
     /// <summary>

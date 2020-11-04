@@ -1,7 +1,7 @@
 ﻿/*
 MIT License
 
-Copyright (c) 2019 Digital Ruby, LLC - https://www.digitalruby.com
+Copyright (c) 2012-present Digital Ruby, LLC - https://www.digitalruby.com
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -27,6 +27,7 @@ SOFTWARE.
 using Microsoft.Extensions.Logging;
 using NLog;
 using NLog.Config;
+using NLog.Time;
 using System;
 using System.Configuration;
 using System.IO;
@@ -179,46 +180,35 @@ namespace DigitalRuby.IPBanCore
         {
             try
             {
-                LogFactory factory = null;
-                try
+                string nlogConfigPath = Path.Combine(AppContext.BaseDirectory, "nlog.config");
+                if (!File.Exists(nlogConfigPath))
                 {
-                    factory = LogManager.LoadConfiguration(ConfigurationManager.OpenExeConfiguration(ConfigurationUserLevel.None).FilePath);
-                }
-                catch
-                {
-                    // if no config, exception is thrown that is OK
-                }
-                if (factory is null || factory.Configuration.AllTargets.Count == 0)
-                {
-                    string nlogConfigPath = Path.Combine(AppContext.BaseDirectory, "nlog.config");
-                    if (!File.Exists(nlogConfigPath))
-                    {
-                        string logLevel = "Warn";
+                    const string defaultLogLevel = "Info";
 
-                        Console.WriteLine("Creating default nlog.config file");
+                    Console.WriteLine("Creating default nlog.config file");
 
-                        // storing this as a resource fails to use correct string in precompiled .exe with .net core, bug with Microsoft I think
-                        string defaultNLogConfig = $@"<?xml version=""1.0""?>
+                    // storing this as a resource fails to use correct string in precompiled .exe with .net core, bug with Microsoft I think
+                    string defaultNLogConfig = $@"<?xml version=""1.0""?>
 <nlog xmlns=""http://www.nlog-project.org/schemas/NLog.xsd"" xmlns:xsi=""http://www.w3.org/2001/XMLSchema-instance"" throwExceptions=""false"" internalLogToConsole=""false"" internalLogToConsoleError=""false"" internalLogLevel=""Trace"">
   <targets>
     <target name=""logfile"" xsi:type=""File"" fileName=""${{basedir}}/logfile.txt"" archiveNumbering=""Sequence"" archiveEvery=""Day"" maxArchiveFiles=""28"" encoding=""UTF-8""/>
     <target name=""console"" xsi:type=""Console""/>
   </targets>
   <rules>
-    <logger name=""*"" minlevel=""{logLevel}"" writeTo=""logfile""/>
-    <logger name=""*"" minlevel=""{logLevel}"" writeTo=""console""/>
+    <logger name=""*"" minlevel=""{defaultLogLevel}"" writeTo=""logfile""/>
+    <logger name=""*"" minlevel=""{defaultLogLevel}"" writeTo=""console""/>
   </rules>
 </nlog>";
-                        ExtensionMethods.FileWriteAllTextWithRetry(nlogConfigPath, defaultNLogConfig);
-                    }
-                    if (File.Exists(nlogConfigPath))
-                    {
-                        factory = LogManager.LoadConfiguration(nlogConfigPath);
-                    }
-                    else
-                    {
-                        throw new IOException("Unable to create nlog configuration file, nlog.config file failed to write default config.");
-                    }
+                    ExtensionMethods.FileWriteAllTextWithRetry(nlogConfigPath, defaultNLogConfig);
+                }
+                LogFactory factory;
+                if (File.Exists(nlogConfigPath))
+                {
+                    factory = LogManager.LoadConfiguration(nlogConfigPath);
+                }
+                else
+                {
+                    throw new IOException("Unable to create nlog configuration file, nlog.config file failed to write default config.");
                 }
                 nlogInstance = factory.GetCurrentClassLogger();
                 instance = new NLogWrapper(nlogInstance);
@@ -609,7 +599,11 @@ namespace DigitalRuby.IPBanCore
         /// <param name="count">How many messages were aggregated, 1 for no aggregation</param>
         /// <param name="type">Event type</param>
         /// <param name="timestamp">Timestamp of the event, default for current timestamp</param>
-        public IPAddressLogEvent(string ipAddress, string userName, string source, int count, IPAddressEventType type, DateTime timestamp = default)
+        /// <param name="external">Whether this log came from an external source</param>
+        /// <param name="failedLoginThreshold">Failed login threshold or 0 for default</param>
+        public IPAddressLogEvent(string ipAddress, string userName, string source,
+            int count, IPAddressEventType type, DateTime timestamp = default, bool external = false,
+            int failedLoginThreshold = 0)
         {
             // normalize ip address if possible
             if (System.Net.IPAddress.TryParse(ipAddress, out System.Net.IPAddress parsedIPAddress))
@@ -625,6 +619,8 @@ namespace DigitalRuby.IPBanCore
             Count = count;
             Type = type;
             Timestamp = (timestamp == default ? IPBanService.UtcNow : timestamp);
+            External = external;
+            FailedLoginThreshold = failedLoginThreshold;
         }
 
         /// <summary>
@@ -657,6 +653,11 @@ namespace DigitalRuby.IPBanCore
         public int Count { get; set; }
 
         /// <summary>
+        /// Whether this event was from an external source
+        /// </summary>
+        public bool External { get; set; }
+
+        /// <summary>
         /// Timestamp of the event
         /// </summary>
         public DateTime Timestamp { get; set; }
@@ -665,5 +666,10 @@ namespace DigitalRuby.IPBanCore
         /// Event flag
         /// </summary>
         public IPAddressEventType Type { get; set; }
+
+        /// <summary>
+        /// Failed login threshold or 0 for default
+        /// </summary>
+        public int FailedLoginThreshold { get; set; }
     }
 }

@@ -1,7 +1,7 @@
 ﻿/*
 MIT License
 
-Copyright (c) 2019 Digital Ruby, LLC - https://www.digitalruby.com
+Copyright (c) 2012-present Digital Ruby, LLC - https://www.digitalruby.com
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -40,17 +40,21 @@ namespace DigitalRuby.IPBanCore
     /// </summary>
     public sealed class IPBanServiceRunner : BackgroundService
     {
-        private readonly Func<Task> onStart;
-        private readonly Func<Task> onStop;
+        private static bool hostServiceSetup;
 
-        private IHost host;
+        private readonly CancellationTokenSource cancelToken = new CancellationTokenSource();
+        private readonly Func<CancellationToken, Task> onRun;
+        private readonly Func<CancellationToken, Task> onStop;
+        private readonly IHost host;
+
+        private int stopLock;
 
         /// <summary>
         /// Constructor
         /// </summary>
-        /// <param name="onStart">Action to execute on start</param>
+        /// <param name="onRun">Action to execute for run</param>
         /// <param name="onStop">Action to execute on stop</param>
-        private IPBanServiceRunner(Func<Task> onStart, Func<Task> onStop)
+        private IPBanServiceRunner(Func<CancellationToken, Task> onRun, Func<CancellationToken, Task> onStop)
         {
             Logger.Warn("Initializing service");
             Directory.SetCurrentDirectory(AppContext.BaseDirectory);
@@ -61,72 +65,87 @@ namespace DigitalRuby.IPBanCore
                     services.AddHostedService<IPBanServiceRunner>(provider => this);
                 });
 
-            this.onStart = onStart;
+            this.onRun = onRun;
             this.onStop = onStop;
-            if (Microsoft.Extensions.Hosting.WindowsServices.WindowsServiceHelpers.IsWindowsService())
-            {
-                hostBuilder.UseWindowsService();
-            }
-            else if (Microsoft.Extensions.Hosting.Systemd.SystemdHelpers.IsSystemdService())
-            {
-                hostBuilder.UseSystemd();
-            }
-            else
-            {
-                // adding console lifetime wrecks things if actually running under a service
-                hostBuilder.UseConsoleLifetime();
-            }
             hostBuilder.UseContentRoot(AppContext.BaseDirectory);
+            SetupHostService(hostBuilder);
             host = hostBuilder.Build();
-        }
-
-        /// <summary>
-        /// Cleanup
-        /// </summary>
-        public override void Dispose()
-        {
-            if (host != null)
-            {
-                Logger.Warn("Disposing service");
-                base.Dispose();
-                host.Dispose();
-                host = null;
-            }
         }
 
         /// <summary>
         /// Run the service
         /// </summary>
-        /// <param name="cancelToken">Cancel token</param>
         /// <returns>Task</returns>
-        public Task RunAsync(CancellationToken cancelToken = default)
+        public async Task RunAsync()
         {
             Logger.Warn("Preparing to run service");
-            return host.RunAsync(cancelToken);
+            try
+            {
+                await host.RunAsync(cancelToken.Token);
+            }
+            finally
+            {
+                host.Dispose();
+            }
+        }
+
+        /// <summary>
+        /// Setup a host builder with Windows service, systemd or console lifetime as appropriate
+        /// </summary>
+        /// <param name="hostBuilder">Host builder</param>
+        public static void SetupHostService(IHostBuilder hostBuilder)
+        {
+            if (hostServiceSetup)
+            {
+                return;
+            }
+            hostServiceSetup = true;
+
+            if (Microsoft.Extensions.Hosting.WindowsServices.WindowsServiceHelpers.IsWindowsService())
+            {
+                Logger.Warn("Running as a Windows service");
+                hostBuilder.UseWindowsService();
+            }
+            else if (Microsoft.Extensions.Hosting.Systemd.SystemdHelpers.IsSystemdService())
+            {
+                Logger.Warn("Running as a systemd service");
+                hostBuilder.UseSystemd();
+            }
+            else
+            {
+                // adding console lifetime wrecks things if actually running under a service
+                Logger.Warn("Running as a console app");
+                hostBuilder.UseConsoleLifetime();
+            }
         }
 
         /// <summary>
         /// Run service helper method
         /// </summary>
         /// <param name="args">Args</param>
-        /// <param name="onStart">Start</param>
+        /// <param name="onRun">Run</param>
         /// <param name="onStop">Stop</param>
-        /// <param name="cancelToken">Cancel token</param>
         /// <returns>Task</returns>
 #pragma warning disable IDE0060 // Remove unused parameter
-        public static async Task MainService(string[] args, Func<Task> onStart, Func<Task> onStop = null, CancellationToken cancelToken = default)
+        public static async Task<int> MainService(string[] args, Func<CancellationToken, Task> onRun, Func<CancellationToken, Task> onStop = null)
 #pragma warning restore IDE0060 // Remove unused parameter
         {
             try
             {
-                using IPBanServiceRunner runner = new IPBanServiceRunner(onStart, onStop);
-                await runner.RunAsync(cancelToken);
+                using IPBanServiceRunner runner = new IPBanServiceRunner(onRun, onStop);
+                await runner.RunAsync();
+            }
+            catch (OperationCanceledException)
+            {
+                // don't care
             }
             catch (Exception ex)
             {
                 ExtensionMethods.FileWriteAllTextWithRetry(System.IO.Path.Combine(AppContext.BaseDirectory, "service_error.txt"), ex.ToString());
                 Logger.Fatal("Fatal error running service", ex);
+                return ex.HResult;
             }
+            return 0;
         }
 
         /// <inheritdoc />
@@ -139,24 +158,45 @@ namespace DigitalRuby.IPBanCore
         /// <inheritdoc />
         public override async Task StopAsync(CancellationToken cancellationToken)
         {
-            Logger.Warn("Stopping service");
-            await base.StopAsync(cancellationToken);
-            if (onStop != null)
+            if (Interlocked.Increment(ref stopLock) == 1)
             {
-                await onStop();
+                Logger.Warn("Stopping service");
+                if (onStop != null)
+                {
+                    await onStop(cancellationToken);
+                }
             }
+        }
+
+        /// <summary>
+        /// Shutdown the service
+        /// </summary>
+        public void Shutdown()
+        {
+            cancelToken.Cancel();
         }
 
         /// <inheritdoc />
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
-            if (onStart != null)
+            Logger.Warn("Running service");
+
+            // fire off run event if there is one
+            if (onRun != null)
             {
-                await onStart();
+                try
+                {
+                    await onRun(cancelToken.Token);
+                }
+                catch (Exception ex)
+                {
+                    Logger.Error(ex);
+                }
+
+                Shutdown();
             }
 
-            Logger.Warn("Running service");
-            await Task.Delay(-1, stoppingToken);
+            // else it is up to the caller of this class to call Shutdown
         }
     }
 }

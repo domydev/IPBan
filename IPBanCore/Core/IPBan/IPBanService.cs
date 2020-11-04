@@ -1,7 +1,7 @@
 ﻿/*
 MIT License
 
-Copyright (c) 2019 Digital Ruby, LLC - https://www.digitalruby.com
+Copyright (c) 2012-present Digital Ruby, LLC - https://www.digitalruby.com
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -41,7 +41,8 @@ using System.Xml;
 namespace DigitalRuby.IPBanCore
 {
     /// <summary>
-    /// Base ipban service class
+    /// Base ipban service class. Configuration, firewall and many other properties will
+    /// not be initialized until the first RunCycle is called.
     /// </summary>
     public partial class IPBanService : IIPBanService, IIsWhitelisted
     {
@@ -50,8 +51,8 @@ namespace DigitalRuby.IPBanCore
         /// </summary>
         public IPBanService()
         {
-            OSName = OSUtility.Instance.Name + (string.IsNullOrWhiteSpace(OSUtility.Instance.FriendlyName) ? string.Empty : " (" + OSUtility.Instance.FriendlyName + ")");
-            OSVersion = OSUtility.Instance.Version;
+            OSName = OSUtility.Name + (string.IsNullOrWhiteSpace(OSUtility.FriendlyName) ? string.Empty : " (" + OSUtility.FriendlyName + ")");
+            OSVersion = OSUtility.Version;
 
             // by default, all IPBan services will parse log files
             updaters.Add(new IPBanLogFileManager(this));
@@ -66,7 +67,7 @@ namespace DigitalRuby.IPBanCore
             Type typeOfT = typeof(T);
 
             // if any derived class of IPBanService, use that
-            List<Type> allTypes = ExtensionMethods.GetAllTypes();
+            IReadOnlyCollection<Type> allTypes = ExtensionMethods.GetAllTypes();
             var q =
                 from type in allTypes
                 where typeOfT.IsAssignableFrom(type)
@@ -78,17 +79,48 @@ namespace DigitalRuby.IPBanCore
         /// <summary>
         /// Manually run one cycle. This is called automatically, unless ManualCycle is true.
         /// </summary>
-        public async Task RunCycle()
+        public async Task RunCycleAsync()
         {
-            await SetNetworkInfo();
-            await ReadAppSettings();
-            await UpdateDelegate();
-            await UpdateUpdaters();
-            await UpdateExpiredIPAddressStates();
-            await ProcessPendingLogEvents();
-            await ProcessPendingFailedLogins();
-            await ProcessPendingSuccessfulLogins();
-            await UpdateFirewall();
+            try
+            {
+                if (await cycleLock.WaitAsync(1))
+                {
+                    try
+                    {
+                        if (IsRunning)
+                        {
+                            await UpdateConfiguration();
+                            await SetNetworkInfo();
+                            await UpdateDelegate();
+                            await UpdateUpdaters();
+                            await UpdateExpiredIPAddressStates();
+                            await ProcessPendingLogEvents();
+                            await ProcessPendingFailedLogins();
+                            await ProcessPendingSuccessfulLogins();
+                            await UpdateFirewall();
+                            try
+                            {
+                                await OnUpdate();
+                            }
+                            catch
+                            {
+                                // derived or other exception should not affect cycle
+                            }
+                        }
+                    }
+                    finally
+                    {
+                        cycleLock.Release();
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                if (!(ex is OperationCanceledException))
+                {
+                    Logger.Error($"Error on {nameof(IPBanService)}.{nameof(RunCycleAsync)}", ex);
+                }
+            }
         }
 
         /// <summary>
@@ -97,9 +129,10 @@ namespace DigitalRuby.IPBanCore
         /// <param name="events">IP address events</param>
         public void AddIPAddressLogEvents(IEnumerable<IPAddressLogEvent> events)
         {
+            var eventsArray = events.ToArray();
             lock (pendingLogEvents)
             {
-                pendingLogEvents.AddRange(events);
+                pendingLogEvents.AddRange(eventsArray);
             }
         }
 
@@ -129,7 +162,8 @@ namespace DigitalRuby.IPBanCore
             text = new string(text.Where(c => c == '\n' || c == '\t' || !char.IsControl(c)).ToArray()).Trim();
 
             // go through all the matches and pull out event info
-            foreach (Match match in regex.Matches(text))
+            MatchCollection matches = regex.Matches(text);
+            foreach (Match match in matches)
             {
                 string userName = null;
                 string ipAddress = null;
@@ -176,7 +210,7 @@ namespace DigitalRuby.IPBanCore
 
                 // check if the regex had an ipadddress group
                 Group ipAddressGroup = match.Groups["ipaddress"];
-                if (ipAddressGroup is null)
+                if (ipAddressGroup is null || !ipAddressGroup.Success)
                 {
                     ipAddressGroup = match.Groups["ipaddress_exact"];
                 }
@@ -201,10 +235,10 @@ namespace DigitalRuby.IPBanCore
                         Logger.Info("Parsing as IP failed, checking dns '{0}'", tempIPAddress);
                         try
                         {
-                            IPHostEntry entry = dns.GetHostEntryAsync(tempIPAddress).Sync();
-                            if (entry != null && entry.AddressList != null && entry.AddressList.Length > 0)
+                            IPAddress[] ipAddresses = dns.GetHostAddressesAsync(tempIPAddress).Sync();
+                            if (ipAddresses != null && ipAddresses.Length > 0)
                             {
-                                ipAddress = entry.AddressList.FirstOrDefault().ToString();
+                                ipAddress = ipAddresses.FirstOrDefault().ToString();
                                 Logger.Info("Dns result '{0}' = '{1}'", tempIPAddress, ipAddress);
                                 break;
                             }
@@ -259,10 +293,10 @@ namespace DigitalRuby.IPBanCore
                 return;
             }
 
-            IsRunning = false;
             try
             {
-                serviceCancelTokenSource.Cancel();
+                cycleLock.WaitAsync().Sync();
+                IsRunning = false;
                 GetUrl(UrlType.Stop).Sync();
                 cycleTimer?.Dispose();
                 IPBanDelegate?.Dispose();
@@ -287,40 +321,63 @@ namespace DigitalRuby.IPBanCore
         /// <summary>
         /// Initialize and start the service
         /// </summary>
-        public async Task StartAsync()
+        /// <param name="cancelToken">Cancel token</param>
+        public async Task RunAsync(CancellationToken cancelToken)
         {
-            if (IsRunning)
-            {
-                return;
-            }
+            CancelToken = cancelToken;
 
-            try
+            if (!IsRunning)
             {
-                IsRunning = true;
-                ipDB = new IPBanDB(DatabasePath ?? "ipban.sqlite");
-                AddWindowsEventViewer();
-                AddUpdater(new IPBanUnblockIPAddressesUpdater(this, Path.Combine(AppContext.BaseDirectory, "unban.txt")));
-                AddUpdater(new IPBanBlockIPAddressesUpdater(this, Path.Combine(AppContext.BaseDirectory, "ban.txt")));
-                AssemblyVersion = IPBanService.IPBanAssembly.GetName().Version.ToString();
-                await ReadAppSettings();
-                UpdateBannedIPAddressesOnStart();
-                IPBanDelegate?.Start(this);
-                if (!ManualCycle)
+                try
                 {
-                    if (RunFirstCycleRightAway)
+                    IsRunning = true;
+
+                    // set version
+                    AssemblyVersion = IPBanService.IPBanAssembly.GetName().Version.ToString();
+
+                    // create db
+                    ipDB = new IPBanDB(DatabasePath ?? "ipban.sqlite");
+
+                    // add some services
+                    AddUpdater(new IPBanUnblockIPAddressesUpdater(this, Path.Combine(AppContext.BaseDirectory, "unban.txt")));
+                    AddUpdater(new IPBanBlockIPAddressesUpdater(this, Path.Combine(AppContext.BaseDirectory, "ban.txt")));
+                    AddUpdater(DnsList);
+
+                    // start delegate if we have one
+                    IPBanDelegate?.Start(this);
+
+                    Logger.Warn("IPBan service started and initialized");
+                    Logger.WriteLogLevels();
+
+                    // setup cycle timer if needed
+                    if (!ManualCycle)
                     {
-                        await RunCycle(); // run one cycle right away
+                        // create a new timer that goes off in 1 second, this will change as the config is
+                        // loaded and the cycle time becomes whatever is in the config
+                        cycleTimer = new Timer(async (_state) =>
+                        {
+                            try
+                            {
+                                await CycleTimerElapsed();
+                            }
+                            catch
+                            {
+                            }
+                        }, null, 1000, Timeout.Infinite);
                     }
-                    cycleTimer = new System.Timers.Timer(Config.CycleTime.TotalMilliseconds);
-                    cycleTimer.Elapsed += async (sender, e) => await CycleTimerElapsed(sender, e);
-                    cycleTimer.Start();
+
+                    if (!ManualCycle)
+                    {
+                        await Task.Delay(Timeout.Infinite, cancelToken);
+                    }
                 }
-                Logger.Warn("IPBan {0} service started and initialized. Operating System: {1}", OSUtility.Instance.Name, OSUtility.Instance.OSString());
-                Logger.WriteLogLevels();
-            }
-            catch (Exception ex)
-            {
-                Logger.Error("Critical error in IPBanService.Start", ex);
+                catch (Exception ex)
+                {
+                    if (!(ex is OperationCanceledException))
+                    {
+                        Logger.Error($"Error in {nameof(IPBanService)}.{nameof(IPBanService.RunAsync)}", ex);
+                    }
+                }
             }
         }
 
@@ -446,11 +503,11 @@ namespace DigitalRuby.IPBanCore
         /// </summary>
         /// <param name="action">Action to run</param>
         /// <param name="queueName">Queue name</param>
-        public void RunFirewallTask(Func<CancellationToken, Task> action, string queueName)
+        public void RunFirewallTask(Func<CancellationToken, Task> action, string queueName = null)
         {
             if (MultiThreaded)
             {
-                if (!serviceCancelTokenSource.IsCancellationRequested)
+                if (!CancelToken.IsCancellationRequested)
                 {
                     queueName = (string.IsNullOrWhiteSpace(queueName) ? "Default" : queueName);
                     AsyncQueue<Func<CancellationToken, Task>> queue;
@@ -459,7 +516,20 @@ namespace DigitalRuby.IPBanCore
                         if (!firewallQueue.TryGetValue(queueName, out queue))
                         {
                             firewallQueue[queueName] = queue = new AsyncQueue<Func<CancellationToken, Task>>();
-                            Task.Run(() => FirewallTask(queue));
+                            Task.Run(async () =>
+                            {
+                                try
+                                {
+                                    await FirewallTask(queue);
+                                }
+                                catch (Exception ex)
+                                {
+                                    if (!(ex is OperationCanceledException))
+                                    {
+                                        Logger.Error(ex);
+                                    }
+                                }
+                            });
                         }
                     }
                     queue.Enqueue(action);
@@ -467,7 +537,17 @@ namespace DigitalRuby.IPBanCore
             }
             else
             {
-                action.Invoke(serviceCancelTokenSource.Token).Sync();
+                action.Invoke(CancelToken).Sync();
+            }
+        }
+
+        private class TestTimeSource : NLog.Time.TimeSource
+        {
+            public override DateTime Time => IPBanService.UtcNow;
+
+            public override DateTime FromSystemTime(DateTime systemTime)
+            {
+                return systemTime.ToUniversalTime();
             }
         }
 
@@ -482,15 +562,35 @@ namespace DigitalRuby.IPBanCore
         public static T CreateAndStartIPBanTestService<T>(string directory = null, string configFileName = null, string defaultBannedIPAddressHandlerUrl = null,
             Func<string, string> configFileModifier = null) where T : IPBanService
         {
+            NLog.Time.TimeSource.Current = new TestTimeSource();
+            string defaultNLogConfig = $@"<?xml version=""1.0""?>
+<nlog xmlns=""http://www.nlog-project.org/schemas/NLog.xsd"" xmlns:xsi=""http://www.w3.org/2001/XMLSchema-instance"" throwExceptions=""false"" internalLogToConsole=""false"" internalLogToConsoleError=""false"" internalLogLevel=""Trace"">
+  <targets>
+    <target name=""logfile"" xsi:type=""File"" fileName=""${{basedir}}/logfile.txt"" encoding=""UTF-8""/>
+    <target name=""console"" xsi:type=""Console""/>
+  </targets>
+  <rules>
+    <logger name=""*"" minlevel=""Debug"" writeTo=""logfile""/>
+    <logger name=""*"" minlevel=""Debug"" writeTo=""console""/>
+  </rules>
+</nlog>";
+            File.WriteAllText(Path.Combine(AppContext.BaseDirectory, "nlog.config"), defaultNLogConfig);
+
+            string logFilePath = Path.Combine(AppContext.BaseDirectory, "logfile.txt");
+            if (File.Exists(logFilePath))
+            {
+                File.Delete(logFilePath);
+            }
+
             ExtensionMethods.RemoveDatabaseFiles();
             DefaultHttpRequestMaker.DisableLiveRequests = true;
             if (string.IsNullOrWhiteSpace(directory))
             {
-                directory = Path.GetDirectoryName(IPBanAssembly.Location);
+                directory = AppContext.BaseDirectory;
             }
             if (string.IsNullOrWhiteSpace(configFileName))
             {
-                configFileName = IPBanService.ConfigFileName;
+                configFileName = IPBanConfig.DefaultFileName;
             }
             string configFilePath = Path.Combine(directory, configFileName);
             string configFileText = File.ReadAllText(configFilePath);
@@ -505,6 +605,7 @@ namespace DigitalRuby.IPBanCore
             service.ConfigFilePath = configFilePath;
             service.MultiThreaded = false;
             service.ManualCycle = true;
+            service.DnsList = null; // too slow for tests, turn off
             if (defaultBannedIPAddressHandlerUrl is null)
             {
                 service.BannedIPAddressHandler = NullBannedIPAddressHandler.Instance;
@@ -514,7 +615,8 @@ namespace DigitalRuby.IPBanCore
                 service.BannedIPAddressHandler = new DefaultBannedIPAddressHandler { BaseUrl = defaultBannedIPAddressHandlerUrl };
             }
             service.Version = "1.1.1.1";
-            service.StartAsync().Sync();
+            service.RunAsync(CancellationToken.None).Sync();
+            service.RunCycleAsync().Sync();
             service.DB.Truncate(true);
             service.Firewall.Truncate();
             return service;
@@ -528,9 +630,15 @@ namespace DigitalRuby.IPBanCore
         {
             if (service != null)
             {
+                if (File.Exists(Path.Combine(AppContext.BaseDirectory, "nlog.config")))
+                {
+                    File.Delete(Path.Combine(AppContext.BaseDirectory, "nlog.config"));
+                }
                 service.Firewall.Truncate();
-                service.RunCycle().Sync();
+                service.RunCycleAsync().Sync();
+                service.IPBanDelegate = null;
                 service.Dispose();
+                NLog.Time.TimeSource.Current = new NLog.Time.AccurateUtcTimeSource();
                 IPBanService.UtcNow = default;
             }
         }

@@ -1,7 +1,7 @@
 ﻿/*
 MIT License
 
-Copyright (c) 2019 Digital Ruby, LLC - https://www.digitalruby.com
+Copyright (c) 2012-present Digital Ruby, LLC - https://www.digitalruby.com
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -38,13 +38,13 @@ namespace DigitalRuby.IPBanCore
         /// </summary>
         /// <param name="entry">Entry - can be ip address, user name, dns entry, etc.</param>
         /// <returns>True if the entry is whitelisted, false otherwise</returns>
-        bool IsWhitelisted(string entry) => throw new NotImplementedException();
+        bool IsWhitelisted(string entry);
 
         /// <summary>
         /// Determines if an ip address range is whitelisted
         /// </summary>
         /// <param name="range">IP address range</param>
         /// <returns>True if any part of the range is whitelisted, false otherwise</returns>
-        bool IsWhitelisted(IPAddressRange range) => throw new NotImplementedException();
+        bool IsWhitelisted(IPAddressRange range);
     }
 }

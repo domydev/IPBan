@@ -358,6 +358,24 @@ namespace DigitalRuby.IPBanCore {
         }
         
         /// <summary>
+        ///   Looks up a localized string similar to Enable Lists.
+        /// </summary>
+        public static string EnableLists {
+            get {
+                return ResourceManager.GetString("EnableLists", resourceCulture);
+            }
+        }
+        
+        /// <summary>
+        ///   Looks up a localized string similar to Whether to enable lists like the recent or naughty list.
+        /// </summary>
+        public static string EnableListsTooltip {
+            get {
+                return ResourceManager.GetString("EnableListsTooltip", resourceCulture);
+            }
+        }
+        
+        /// <summary>
         ///   Looks up a localized string similar to Enable SSL.
         /// </summary>
         public static string EnableSSL {
@@ -565,6 +583,24 @@ namespace DigitalRuby.IPBanCore {
         }
         
         /// <summary>
+        ///   Looks up a localized string similar to Failed Login Threshold.
+        /// </summary>
+        public static string FailedLoginThreshold {
+            get {
+                return ResourceManager.GetString("FailedLoginThreshold", resourceCulture);
+            }
+        }
+        
+        /// <summary>
+        ///   Looks up a localized string similar to Override the failed login threshold or 0 for default.
+        /// </summary>
+        public static string FailedLoginThresholdTooltip {
+            get {
+                return ResourceManager.GetString("FailedLoginThresholdTooltip", resourceCulture);
+            }
+        }
+        
+        /// <summary>
         ///   Looks up a localized string similar to Filter Settings.
         /// </summary>
         public static string FilterSettings {
@@ -615,25 +651,6 @@ namespace DigitalRuby.IPBanCore {
         public static string FirewallSettings {
             get {
                 return ResourceManager.GetString("FirewallSettings", resourceCulture);
-            }
-        }
-        
-        /// <summary>
-        ///   Looks up a localized string similar to Firewall Type.
-        /// </summary>
-        public static string FirewallType {
-            get {
-                return ResourceManager.GetString("FirewallType", resourceCulture);
-            }
-        }
-        
-        /// <summary>
-        ///   Looks up a localized string similar to Firewall types: Allows setting a type of firewall if not using the default firewall implementation.
-        ///Prefix with OS:ClassName, example: Windows:Custom,Linux:Default.
-        /// </summary>
-        public static string FirewallTypeTooltip {
-            get {
-                return ResourceManager.GetString("FirewallTypeTooltip", resourceCulture);
             }
         }
         
@@ -764,7 +781,7 @@ namespace DigitalRuby.IPBanCore {
         }
         
         /// <summary>
-        ///   Looks up a localized string similar to Regular expression for more advanced blacklisting. Shortcut: use* to allow any piece of an ip, dns name or user name(i.e. 128.128.128.*). Sample regex that blacklists a few ips: ^(128\.128\.128\.*)|(99\.99\.99\.[0-9])$ More info about regex: http://www.regular-expressions.info/.
+        ///   Looks up a localized string similar to Regular expression for more advanced blacklisting. Shortcut: use* to allow any piece of an ip, dns name, url or user name(i.e. 128.128.128.*). Sample regex that blacklists a few ips: ^(128\.128\.128\.*)|(99\.99\.99\.[0-9])$ More info about regex: http://www.regular-expressions.info/.
         /// </summary>
         public static string IPBlacklistRegexTooltip {
             get {
@@ -773,7 +790,7 @@ namespace DigitalRuby.IPBanCore {
         }
         
         /// <summary>
-        ///   Looks up a localized string similar to IP addresses, cidr masks, dns names or user names to always ban and never unban. Comma separated..
+        ///   Looks up a localized string similar to IP addresses, cidr masks, dns names or user names to always ban and never unban. Prefix user names with user:, i.e. user:root..
         /// </summary>
         public static string IPBlacklistTooltip {
             get {
@@ -809,7 +826,7 @@ namespace DigitalRuby.IPBanCore {
         }
         
         /// <summary>
-        ///   Looks up a localized string similar to IP addresses, cidr masks or dns names to never ban. Comma separated.
+        ///   Looks up a localized string similar to IP addresses, cidr masks, urls or dns names to never ban. Prefis user names with user:, i.e. user:root..
         /// </summary>
         public static string IPWhitelistTooltip {
             get {
@@ -1729,18 +1746,18 @@ namespace DigitalRuby.IPBanCore {
         /// <summary>
         ///   Looks up a localized string similar to User Name Edit Distance.
         /// </summary>
-        public static string UserNameWhiteListMinimumEditDistance {
+        public static string UserNameWhitelistMinimumEditDistance {
             get {
-                return ResourceManager.GetString("UserNameWhiteListMinimumEditDistance", resourceCulture);
+                return ResourceManager.GetString("UserNameWhitelistMinimumEditDistance", resourceCulture);
             }
         }
         
         /// <summary>
         ///   Looks up a localized string similar to If user name whitelist is not empty and if the edit distance (levenshtein distance) of a failed user name is greater than this distance away, the user name is immediately banned. Set to 0 to ban all failed user names if UserNameWhitelist has entries. Case is ignored. Empty user names are always allowed..
         /// </summary>
-        public static string UserNameWhiteListMinimumEditDistanceTooltip {
+        public static string UserNameWhitelistMinimumEditDistanceTooltip {
             get {
-                return ResourceManager.GetString("UserNameWhiteListMinimumEditDistanceTooltip", resourceCulture);
+                return ResourceManager.GetString("UserNameWhitelistMinimumEditDistanceTooltip", resourceCulture);
             }
         }
         
@@ -1763,7 +1780,7 @@ namespace DigitalRuby.IPBanCore {
         }
         
         /// <summary>
-        ///   Looks up a localized string similar to Comma separated list of user names that are allowed. UserNameWhiteListMinimumEditDistance is checked for user names not in the list to determine whether a failed user name should be banned. Case is ignored. Empty user names are always allowed. *** IMPORTANT*** This can represent an attack vector by a hacker. If they know you are using DigitalRuby.IPBan and they don&apos;t get locked out right away, they might know they are somewhat close to the right user name. Make sure your passwords are complex enough and thi [rest of string was truncated]&quot;;.
+        ///   Looks up a localized string similar to Comma separated list of user names that are allowed. UserNameWhitelistMinimumEditDistance is checked for user names not in the list to determine whether a failed user name should be banned. Case is ignored. Empty user names are always allowed. *** IMPORTANT*** This can represent an attack vector by a hacker. If they know you are using IPBan and they don&apos;t get locked out right away, they might know they are somewhat close to the right user name. Make sure your passwords are complex enough and this shouldn&apos;t  [rest of string was truncated]&quot;;.
         /// </summary>
         public static string UserNameWhitelistTooltip {
             get {

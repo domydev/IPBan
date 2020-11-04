@@ -1,7 +1,7 @@
 ﻿/*
 MIT License
 
-Copyright (c) 2019 Digital Ruby, LLC - https://www.digitalruby.com
+Copyright (c) 2012-present Digital Ruby, LLC - https://www.digitalruby.com
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -36,7 +36,7 @@ namespace DigitalRuby.IPBanTests
     [TestFixture]
     public class IPBanLogFileParserTests : IIPAddressEventHandler
     {
-        private static readonly string tempPath = Path.Combine(OSUtility.Instance.TempFolder, "LogFileParserTest");
+        private static readonly string tempPath = LogFileScanner.NormalizeGlob(Path.Combine(OSUtility.TempFolder, "LogFileParserTest"), out _, out _);
 
         private readonly List<IPAddressLogEvent> failedIPAddresses = new List<IPAddressLogEvent>();
         private readonly List<IPAddressLogEvent> successIPAddresses = new List<IPAddressLogEvent>();
@@ -84,7 +84,7 @@ namespace DigitalRuby.IPBanTests
             {
                 using StreamWriter writer = new StreamWriter(CreateFile(), Encoding.UTF8) { AutoFlush = true };
 
-                // scan once before writing any data, otherwise scanner starts at aned of file and will miss
+                // scan once before writing any data, otherwise scanner starts at end of file and will miss
                 // the first data written
                 scanner.ProcessFiles();
 
@@ -247,6 +247,40 @@ namespace DigitalRuby.IPBanTests
             Assert.AreEqual(1, failedIPAddresses[0].Count);
             Assert.AreEqual("SSH", failedIPAddresses[0].Source);
             Assert.AreEqual(new DateTime(2020, 03, 28, 13, 30, 56, DateTimeKind.Utc), failedIPAddresses[0].Timestamp);
+        }
+
+        [Test]
+        public void TestNormalizeGlob()
+        {
+            string[] files = new string[]
+            {
+                "c:/temp/file.txt",
+                "c:/temp/files/*/subdir/files*.txt",
+                "c:\\temp\\file.txt",
+                "c:\\temp\\files\\*\\subdir\\files*.txt",
+                "/var/log/all*files.txt"
+            };
+            string[] outFiles = new string[]
+            {
+                "c:/temp/", "file.txt",
+                "c:/temp/files/", "*/subdir/files*.txt",
+                "c:/temp/", "file.txt",
+                "c:/temp/files/", "*/subdir/files*.txt",
+                "/var/log/", "all*files.txt"
+            };
+            for (int i = 0; i < files.Length; i++)
+            {
+                string result = LogFileScanner.NormalizeGlob(files[i], out string dirPortion, out string globPortion);
+                Assert.AreEqual(outFiles[i * 2], dirPortion);
+                Assert.AreEqual(outFiles[(i * 2) + 1], globPortion);
+                Assert.AreEqual(outFiles[i * 2] + outFiles[(i * 2) + 1], result);
+            }
+
+            Assert.Throws<ArgumentException>(() => LogFileScanner.NormalizeGlob("a.txt", out _, out _));
+            Assert.Throws<ArgumentException>(() => LogFileScanner.NormalizeGlob("c:/", out _, out _));
+            Assert.Throws<ArgumentException>(() => LogFileScanner.NormalizeGlob("/", out _, out _));
+            Assert.Throws<ArgumentException>(() => LogFileScanner.NormalizeGlob("c:\\", out _, out _));
+            Assert.Throws<ArgumentException>(() => LogFileScanner.NormalizeGlob("\\", out _, out _));
         }
 
         private LogFileScanner SetupLogFileScanner(string failureRegex = "",

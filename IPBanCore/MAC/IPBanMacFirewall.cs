@@ -1,7 +1,7 @@
 ﻿/*
 MIT License
 
-Copyright (c) 2019 Digital Ruby, LLC - https://www.digitalruby.com
+Copyright (c) 2012-present Digital Ruby, LLC - https://www.digitalruby.com
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -32,73 +32,73 @@ namespace DigitalRuby.IPBanCore
     // TODO: use pfctl
     [RequiredOperatingSystem(OSUtility.Mac)]
     [CustomName("Default")]
-    public class IPBanMacFirewall : IPBanBaseFirewall, IIPBanFirewall
+    public class IPBanMacFirewall : IPBanBaseFirewall
     {
         public IPBanMacFirewall(string rulePrefix = null) : base(rulePrefix)
         {
         }
 
-        public Task<bool> AllowIPAddresses(IEnumerable<string> ipAddresses, CancellationToken cancelToken = default)
+        public override Task<bool> AllowIPAddresses(IEnumerable<string> ipAddresses, CancellationToken cancelToken = default)
         {
             throw new NotImplementedException();
         }
 
-        public Task<bool> AllowIPAddresses(string ruleNamePrefix, IEnumerable<IPAddressRange> ipAddresses, IEnumerable<PortRange> allowedPorts = null, CancellationToken cancelToken = default)
+        public override Task<bool> AllowIPAddresses(string ruleNamePrefix, IEnumerable<IPAddressRange> ipAddresses, IEnumerable<PortRange> allowedPorts = null, CancellationToken cancelToken = default)
         {
             throw new NotImplementedException();
         }
 
-        public Task<bool> BlockIPAddresses(string ruleNamePrefix, IEnumerable<string> ipAddresses, IEnumerable<PortRange> allowedPorts = null, CancellationToken cancelToken = default)
+        public override Task<bool> BlockIPAddresses(string ruleNamePrefix, IEnumerable<string> ipAddresses, IEnumerable<PortRange> allowedPorts = null, CancellationToken cancelToken = default)
         {
             throw new NotImplementedException();
         }
 
-        public Task<bool> BlockIPAddressesDelta(string ruleNamePrefix, IEnumerable<IPBanFirewallIPAddressDelta> ipAddresses, IEnumerable<PortRange> allowedPorts = null, CancellationToken cancelToken = default)
+        public override Task<bool> BlockIPAddressesDelta(string ruleNamePrefix, IEnumerable<IPBanFirewallIPAddressDelta> ipAddresses, IEnumerable<PortRange> allowedPorts = null, CancellationToken cancelToken = default)
         {
             throw new NotImplementedException();
         }
 
-        public Task<bool> BlockIPAddresses(string ruleNamePrefix, IEnumerable<IPAddressRange> ranges, IEnumerable<PortRange> allowedPorts = null, CancellationToken cancelToken = default)
+        public override Task<bool> BlockIPAddresses(string ruleNamePrefix, IEnumerable<IPAddressRange> ranges, IEnumerable<PortRange> allowedPorts = null, CancellationToken cancelToken = default)
         {
             throw new NotImplementedException();
         }
 
-        public IEnumerable<string> GetRuleNames(string ruleNamePrefix = null)
+        public override IEnumerable<string> GetRuleNames(string ruleNamePrefix = null)
         {
             throw new NotImplementedException();
         }
 
-        public bool DeleteRule(string ruleName)
+        public override bool DeleteRule(string ruleName)
         {
             throw new NotImplementedException();
         }
 
-        public IEnumerable<string> EnumerateAllowedIPAddresses()
+        public override IEnumerable<string> EnumerateAllowedIPAddresses()
         {
             throw new NotImplementedException();
         }
 
-        public IEnumerable<string> EnumerateBannedIPAddresses()
+        public override IEnumerable<string> EnumerateBannedIPAddresses()
         {
             throw new NotImplementedException();
         }
 
-        public bool IsIPAddressAllowed(string ipAddress, int port = -1)
+        public override bool IsIPAddressAllowed(string ipAddress, int port = -1)
         {
             throw new NotImplementedException();
         }
 
-        public bool IsIPAddressBlocked(string ipAddress, out string ruleName, int port = -1)
+        public override bool IsIPAddressBlocked(string ipAddress, out string ruleName, int port = -1)
         {
             throw new NotImplementedException();
         }
 
-        public IEnumerable<IPAddressRange> EnumerateIPAddresses(string ruleNamePrefix = null)
+        public override IEnumerable<IPAddressRange> EnumerateIPAddresses(string ruleNamePrefix = null)
         {
             throw new NotImplementedException();
         }
 
-        public void Truncate()
+        public override void Truncate()
         {
             throw new NotImplementedException();
         }

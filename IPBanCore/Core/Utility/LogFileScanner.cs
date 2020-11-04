@@ -1,7 +1,7 @@
 /*
 MIT License
 
-Copyright (c) 2019 Digital Ruby, LLC - https://www.digitalruby.com
+Copyright (c) 2012-present Digital Ruby, LLC - https://www.digitalruby.com
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -94,20 +94,19 @@ namespace DigitalRuby.IPBanCore
         private readonly System.Timers.Timer fileProcessingTimer;
         private readonly long maxFileSize;
         private readonly Encoding encoding;
-        private readonly int maxLineLength;
+        private readonly ushort maxLineLength;
 
         /// <summary>
         /// Create a log file scanner
         /// </summary>
-        /// <param name="pathAndMask">File path and mask (i.e. /var/log/auth*.log)</param>
+        /// <param name="pathAndMask">File path and mask with glob syntax (i.e. /var/log/auth*.log)</param>
         /// <param name="maxFileSizeBytes">Max size of file (in bytes) before it is deleted or 0 for unlimited</param>
         /// <param name="fileProcessingIntervalMilliseconds">How often to process files, in milliseconds, less than 1 for manual processing, in which case <see cref="ProcessFiles"/> must be called as needed.</param>
         /// <param name="encoding">Encoding or null for utf-8. The encoding must either be single or variable byte, like ASCII, Ansi, utf-8, etc. UTF-16 and the like are not supported.</param>
         /// <param name="maxLineLength">Maximum line length before considering the file a binary file and failing</param>
-        public LogFileScanner(string pathAndMask, long maxFileSizeBytes = 0, int fileProcessingIntervalMilliseconds = 0, Encoding encoding = null, int maxLineLength = 8192)
+        public LogFileScanner(string pathAndMask, long maxFileSizeBytes = 0, int fileProcessingIntervalMilliseconds = 0, Encoding encoding = null, ushort maxLineLength = 8192)
         {
-            // replace env vars in path/mask
-            PathAndMask = pathAndMask?.Trim().Replace('\\', '/');
+            PathAndMask = pathAndMask;
             PathAndMask.ThrowIfNullOrEmpty(nameof(pathAndMask), "Must pass a non-empty path and mask to log file scanner");
 
             // set properties
@@ -143,6 +142,7 @@ namespace DigitalRuby.IPBanCore
         /// </summary>
         public void Dispose()
         {
+            GC.SuppressFinalize(this);
             // wait for any outstanding file processing
             if (fileProcessingTimer != null)
             {
@@ -173,42 +173,30 @@ namespace DigitalRuby.IPBanCore
         {
             List<WatchedFile> files = new List<WatchedFile>();
 
-            // pull out the directory portion of the path/mask, accounting for /* syntax in the folder name
-            string replacedPathMask = ReplacePathVars(pathAndMask);
-            int lastSlashPos = replacedPathMask.LastIndexOf('/');
-            string baseDirectoryWithoutGlobSyntax = replacedPathMask.Substring(0, lastSlashPos);
-            int pos = baseDirectoryWithoutGlobSyntax.IndexOf("/*");
-            Matcher fileMatcher;
-            if (pos < 0)
-            {
-                // no /* in the directory, assume file mask is the last piece
-                string fileMask = replacedPathMask.Substring(++lastSlashPos);
-                fileMatcher = new Matcher(StringComparison.OrdinalIgnoreCase).AddInclude(fileMask);
-            }
-            else
-            {
-                // found a /*, take the root directory and make that the base path and everything else the glob path
-                string fileMask = replacedPathMask.Substring(pos);
-                baseDirectoryWithoutGlobSyntax = replacedPathMask.Substring(0, pos);
-                fileMatcher = new Matcher(StringComparison.OrdinalIgnoreCase).AddInclude(fileMask);
-            }
+            // pull out the directory portion of the path/mask, accounting for * syntax in the folder name
+            string replacedPathAndMask = ReplacePathVars(pathAndMask);
+            NormalizeGlob(replacedPathAndMask, out string dirPortion, out string globPortion);
+
+            // create a matcher to match glob or regular file syntax
+            Matcher fileMatcher = new Matcher(StringComparison.OrdinalIgnoreCase).AddInclude(globPortion);
 
             // get the base directory that does not have glob syntax
-            DirectoryInfoWrapper baseDir = new DirectoryInfoWrapper(new DirectoryInfo(baseDirectoryWithoutGlobSyntax));
+            DirectoryInfoWrapper baseDir = new DirectoryInfoWrapper(new DirectoryInfo(dirPortion));
 
             // read in existing files that match the mask in the directory being watched
             foreach (var file in fileMatcher.Execute(baseDir).Files)
             {
                 try
                 {
-                    FileInfo info = new FileInfo(Path.Combine(baseDirectoryWithoutGlobSyntax, file.Path));
-                    files.Add(new WatchedFile(info.FullName, info.Length));
+                    string fullPath = dirPortion + file.Path;
+                    long fileLength = new FileInfo(fullPath).Length;
+                    files.Add(new WatchedFile(fullPath, fileLength));
                 }
                 catch (Exception ex)
                 {
                     if (!(ex is FileNotFoundException || ex is IOException))
                     {
-                        throw ex;
+                        throw;
                     }
                     // ignore, maybe the file got deleted...
                 }
@@ -248,7 +236,7 @@ namespace DigitalRuby.IPBanCore
                         // if the length changed, we need to parse data from the file
                         if (len != file.LastLength)
                         {
-                            using FileStream fs = new FileStream(file.FileName, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 256);
+                            using FileStream fs = new FileStream(file.FileName, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
                             file.LastLength = len;
                             ProcessFile(file, fs);
                         }
@@ -303,6 +291,114 @@ namespace DigitalRuby.IPBanCore
         /// </summary>
         /// <param name="text">Text to process</param>
         protected virtual void OnProcessText(string text) { }
+
+        /// <summary>
+        /// Normalize a glob. This gets everything with the * character and after escaped properly.
+        /// </summary>
+        /// <param name="glob">Glob</param>
+        /// <param name="dirPortion">Directory portion</param>
+        /// <param name="globPortion">Glob portion</param>
+        /// <returns>Normalized glob</returns>
+        public static string NormalizeGlob(string glob, out string dirPortion, out string globPortion)
+        {
+            dirPortion = globPortion = null;
+            if (string.IsNullOrWhiteSpace(glob))
+            {
+                return glob;
+            }
+
+            // backslash to forward slash
+            glob = glob.Replace('\\', '/').Trim();
+
+            // find first segment that has a glob wildcard
+            int pos = glob.IndexOf('*');
+            if (pos >= 0)
+            {
+                for (int i = pos; i >= 0; i--)
+                {
+                    if (glob[i] == '/')
+                    {
+                        // directory is every segment before the glob wildcard
+                        dirPortion = glob[..++i];
+
+                        // glob is everything after
+                        globPortion = glob[i..];
+                        break;
+                    }
+                }
+            }
+            if (dirPortion is null)
+            {
+                pos = glob.LastIndexOfAny(new[] { '/', '\\' });
+                if (pos < 0)
+                {
+                    throw new ArgumentException("Cannot normalize a glob that does not have a directory and a file piece");
+                }
+
+                // directory is every segment before the last dir sep
+                dirPortion = glob[..++pos];
+
+                // glob is everything after
+                globPortion = glob[pos..];
+
+                if (globPortion.Length == 0)
+                {
+                    throw new ArgumentException("Cannot normalize a glob that does not have a directory and a file piece");
+                }
+            }
+
+            // escape needed chars
+            globPortion = globPortion.Replace("(", "\\(").Replace(")", "\\)").Replace("[", "\\[").Replace("]", "\\]");
+
+            return dirPortion + globPortion;
+        }
+
+        /// <summary>
+        /// Replay a file being written to simulate regular logging
+        /// </summary>
+        /// <param name="sourceFile">Source file</param>
+        /// <param name="destFile">Dest file</param>
+        /// <param name="delay">Delay in ms before starting replay</param>
+        /// <param name="cancelToken">Cancel token</param>
+        public static void Replay(string sourceFile, string destFile, int delay, CancellationToken cancelToken = default)
+        {
+            FileInfo info = new FileInfo(sourceFile);
+            Random r = new Random();
+            long pos = 0;
+            ExtensionMethods.FileDeleteWithRetry(destFile);
+            File.WriteAllText(destFile, string.Empty);
+            Thread.Sleep(delay);
+            while (pos >= 0 && !cancelToken.IsCancellationRequested)
+            {
+                try
+                {
+                    using var stream = new FileStream(info.FullName, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                    using var stream2 = new FileStream(destFile, FileMode.OpenOrCreate, FileAccess.Write, FileShare.ReadWrite);
+                    stream2.Position = stream2.Length;
+                    stream.Position = pos;
+                    int rand = r.Next(3, 1111);
+                    for (int i = 0; i < rand; i++)
+                    {
+                        int b = stream.ReadByte();
+                        pos++;
+                        if (b >= 0)
+                        {
+                            stream2.WriteByte((byte)b);
+
+                        }
+                        else
+                        {
+                            pos = -1;
+                            break;
+                        }
+                    }
+                }
+                catch
+                {
+                }
+                Thread.Sleep(r.Next(1000, 10000));
+            }
+        }
 
         private void SetProcessingTimerEnabled(bool enabled)
         {
@@ -391,51 +487,61 @@ namespace DigitalRuby.IPBanCore
 
         private void ProcessFile(WatchedFile file, FileStream fs)
         {
-            int b;
-            long lastNewlinePos = -1;
-            long end = Math.Min(file.LastLength, fs.Length);
-            int countBeforeNewline = 0;
-            fs.Position = file.LastPosition;
-
             Logger.Trace("Processing log file {0}, len = {1}, pos = {2}", file.FileName, file.LastLength, file.LastPosition);
 
-            while (fs.Position < end && countBeforeNewline++ != maxLineLength)
+            // seek to next position
+            fs.Position = file.LastPosition;
+
+            // fill up to 64K bytes
+            byte[] bytes = new byte[ushort.MaxValue];
+            int read = fs.Read(bytes, 0, bytes.Length);
+
+            // setup state
+            int bytesEnd;
+            bool foundNewLine = false;
+
+            // find the last newline char
+            for (bytesEnd = read - 1; bytesEnd >= 0; bytesEnd--)
             {
-                // read until last \n is found
-                b = fs.ReadByte();
-                if (b == '\n')
+                if (bytes[bytesEnd] == '\n')
                 {
-                    lastNewlinePos = fs.Position - 1;
-                    countBeforeNewline = 0;
+                    // take bytes up to and including the last newline char
+                    bytesEnd++;
+                    foundNewLine = true;
+                    break;
                 }
             }
 
-            if (countBeforeNewline > maxLineLength)
+            // check for binary file
+            if (!foundNewLine)
             {
-                file.IsBinaryFile = true;
-                Logger.Warn($"Aborting parsing log file {file.FileName}, file may be a binary file");
+                if (read > maxLineLength)
+                {
+                    // max line length bytes without a new line
+                    file.IsBinaryFile = true;
+                    Logger.Warn($"Aborting parsing log file {file.FileName}, file may be a binary file");
+                }
+                // reset position try again on next cycle
+                fs.Position = file.LastPosition;
                 return;
             }
 
             // if we found a newline, process all the text up until that newline
-            if (lastNewlinePos > -1)
+            if (foundNewLine)
             {
                 try
                 {
-                    // read all the text for the current set of lines into a string for processing
-                    fs.Position = file.LastPosition;
-
-                    // create giant text blob with all lines trimmed
-                    byte[] bytes = new BinaryReader(fs).ReadBytes((int)(lastNewlinePos - fs.Position));
-                    string text = "\n" + string.Join('\n', encoding.GetString(bytes).Split('\n').Select(l => l.Trim())) + "\n";
-
-                    OnProcessText(text);
-                    ProcessText?.Invoke(text);
+                    // strip out all carriage returns and ensure string starts/ends with newlines
+                    string foundText = encoding.GetString(bytes, 0, bytesEnd).Trim().Replace("\r", string.Empty);
+                    string processText = "\n" + foundText + "\n";
+                    OnProcessText(processText);
+                    ProcessText?.Invoke(processText);
                 }
                 finally
                 {
                     // set file position for next processing
-                    fs.Position = file.LastPosition = ++lastNewlinePos;
+                    fs.Position = file.LastPosition + bytesEnd;
+                    file.LastPosition = fs.Position;
                 }
             }
         }

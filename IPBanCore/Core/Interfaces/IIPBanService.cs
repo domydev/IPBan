@@ -1,7 +1,7 @@
 ﻿/*
 MIT License
 
-Copyright (c) 2019 Digital Ruby, LLC - https://www.digitalruby.com
+Copyright (c) 2012-present Digital Ruby, LLC - https://www.digitalruby.com
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -43,16 +43,10 @@ namespace DigitalRuby.IPBanCore
     }
 
     /// <summary>
-    /// IPBan service interface
+    /// Allow reading and writing of configuration
     /// </summary>
-    public interface IIPBanService : IIPAddressEventHandler, IDisposable
+    public interface IConfigReaderWriter
     {
-        /// <summary>
-        /// Manually run regular processing - useful if testing
-        /// </summary>
-        /// <returns>Task</returns>
-        Task RunCycle();
-
         /// <summary>
         /// Update config file with new xml
         /// </summary>
@@ -65,6 +59,18 @@ namespace DigitalRuby.IPBanCore
         /// </summary>
         /// <returns>Task with xml config</returns>
         Task<string> ReadConfigAsync();
+    }
+
+    /// <summary>
+    /// IPBan service interface
+    /// </summary>
+    public interface IIPBanService : IIPAddressEventHandler, IConfigReaderWriter, IDisposable
+    {
+        /// <summary>
+        /// Manually run regular processing - useful if testing
+        /// </summary>
+        /// <returns>Task</returns>
+        Task RunCycleAsync();
 
         /// <summary>
         /// Replace place-holders in url with values from this service
@@ -99,8 +105,8 @@ namespace DigitalRuby.IPBanCore
         /// Run an action on the firewall queue
         /// </summary>
         /// <param name="action">Action to run on the firewall queue</param>
-        /// <param name="name">Queue name</param>
-        void RunFirewallTask(Func<CancellationToken, Task> action, string name);
+        /// <param name="name">Queue name, null for default</param>
+        void RunFirewallTask(Func<CancellationToken, Task> action, string name = null);
 
         /// <summary>
         /// Check if an ip is whitelisted

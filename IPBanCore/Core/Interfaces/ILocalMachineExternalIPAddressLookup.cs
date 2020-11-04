@@ -1,7 +1,7 @@
 ﻿/*
 MIT License
 
-Copyright (c) 2019 Digital Ruby, LLC - https://www.digitalruby.com
+Copyright (c) 2012-present Digital Ruby, LLC - https://www.digitalruby.com
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -93,7 +93,7 @@ namespace DigitalRuby.IPBanCore
                 catch (Exception _ex)
                 {
                     ex = _ex;
-                    await Task.Delay(600);
+                    await Task.Delay(1000);
                 }
             }
 

@@ -1,3 +1,4 @@
+﻿/*
 MIT License
 
 Copyright (c) 2012-present Digital Ruby, LLC - https://www.digitalruby.com
@@ -19,3 +20,32 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+*/
+
+using System;
+using System.Collections.Generic;
+using System.Net;
+using System.Text;
+
+namespace DigitalRuby.IPBanCore
+{
+    /// <summary>
+    /// Get a list of dns servers
+    /// </summary>
+    public interface IDnsServerList : IUpdater
+    {
+        /// <summary>
+        /// Check if an ip address is a dns server
+        /// </summary>
+        /// <param name="ipAddress">IP address</param>
+        /// <returns>True if the ip address is a dns server, false otherwise</returns>
+        bool ContainsIPAddress(IPAddress ipAddress);
+
+        /// <summary>
+        /// Check if an ip address range contains a dns server
+        /// </summary>
+        /// <param name="range">IP address range</param>
+        /// <returns>True if the ip address range contains a dns server, false otherwise</returns>
+        bool ContainsIPAddressRange(IPAddressRange range);
+    }
+}
